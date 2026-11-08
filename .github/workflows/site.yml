@@ -51,14 +51,6 @@ jobs:
         env:
           SITE_DIR: ${{ runner.temp }}/site-${{ matrix.mode }}
         run: npx playwright test
-      - name: Lighthouse (report only, never fails the job)
-        if: ${{ !cancelled() }}
-        working-directory: qa/site
-        run: >
-          npm run lighthouse --
-          --collect.staticDistDir="$RUNNER_TEMP/site-${{ matrix.mode }}"
-          --collect.settings.chromeFlags="--no-sandbox"
-        continue-on-error: true
       # Screenshots and reports are for a person to look at; the checks above are the gate. A full
       # artifact quota on the account must not turn a passing run red.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
@@ -69,6 +61,5 @@ jobs:
           path: |
             qa/site/test-results
             qa/site/playwright-report
-            qa/site/lhci-report
           retention-days: 14
           if-no-files-found: ignore

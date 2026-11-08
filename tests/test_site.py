@@ -192,3 +192,19 @@ def test_generated_site_data_is_current():
     scripts/render_site_data.py; run it after changing the demo, the oracle answers or a measurement."""
     import render_site_data
     assert render_site_data.main(["--check"]) == 0
+
+
+def test_site_qa_tooling_has_no_lighthouse():
+    """Review D1: @lhci/cli brought in all 17 npm audit findings of qa/site, for a report-only
+    step whose numbers may not be shown anywhere."""
+    import json
+    qa = ROOT / "qa" / "site"
+    pkg = json.loads((qa / "package.json").read_text(encoding="utf-8"))
+    assert not [n for n in pkg.get("devDependencies", {}) if "lhci" in n or "lighthouse" in n]
+    assert not [c for c in pkg.get("scripts", {}).values() if "lhci" in c or "lighthouse" in c]
+    lock = json.loads((qa / "package-lock.json").read_text(encoding="utf-8"))
+    assert lock["packages"][""]["devDependencies"] == pkg["devDependencies"]
+    assert not [k for k in lock["packages"] if "lhci" in k or "lighthouse" in k]
+    assert not (qa / "lighthouserc.json").exists()
+    workflow = (ROOT / ".github" / "workflows" / "site.yml").read_text(encoding="utf-8").lower()
+    assert "lighthouse" not in workflow and "lhci" not in workflow

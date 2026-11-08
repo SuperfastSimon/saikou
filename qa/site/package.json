@@ -4,12 +4,10 @@
   "private": true,
   "description": "Browser checks for the staged saikou.tech site. Dev tooling only; not part of the published package.",
   "scripts": {
-    "test": "playwright test",
-    "lighthouse": "lhci autorun --config=lighthouserc.json"
+    "test": "playwright test"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
-    "@lhci/cli": "0.15.1",
     "@playwright/test": "1.63.0"
   }
 }

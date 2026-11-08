@@ -26,9 +26,9 @@ the logo, the h1 and the hero's blocked fix, styled by the site's CSS. Run `node
 changing a home page's h1 or hero; it rewrites `site/assets/og-en.png` and `og-nl.png`. Look at
 both: `scripts/check_site.py` checks that they exist and have the stated size, not what they show.
 
-**Lighthouse** is report-only (`npm run lighthouse -- --collect.staticDistDir=<dir>`; every
-assertion is `warn`). Its numbers stay in the CI artifact. Never put one on the site or in the
-docs: the project has no score, and this would be one.
+**No Lighthouse.** It was a report-only step, and `@lhci/cli` brought in every `npm audit` finding
+of this folder, so it was removed (2026-11-08). If it comes back, keep its numbers out of the site
+and the docs: the project has no score, and a Lighthouse score would be one.
 
 Pinned versions were each released more than a month before this was written (2026-10-22), so
 nothing brand new is pulled in. Update deliberately, together with the lockfile.
