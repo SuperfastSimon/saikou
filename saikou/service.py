@@ -9,17 +9,20 @@ wired up by saikou.server; the hosted API never touches the file system.
 from __future__ import annotations
 
 import difflib
+import functools
 import http.client
 import json
 import os
 import re
 import secrets
 import shutil
+import stat
+import tempfile
 import threading
 import urllib.error
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import catalog
 from .engine import (
@@ -46,6 +49,13 @@ from .verify import (
 READING_GUIDE = ("No score. Each finding says how it was established (tool / parser / "
                  "mechanical). Absence of a finding is not evidence of a fix.")
 MODES = ("verify", "gate")
+
+# The contract values `saikou harden`, the hosted API and the intake questions accept. The
+# first of each is the default. Anything else is refused: the engine compares exactly, so an
+# unknown compat value would silently drop the strict_api gate.
+COMPAT_CHOICES = ("strict_api", "allow_signature_changes", "rewrite_freely")
+DEPENDENCY_CHOICES = ("stdlib_only", "existing_only", "may_add")
+ERROR_POLICY_CHOICES = ("fail_closed", "preserve_current")
 
 
 class ServiceError(Exception):
@@ -127,6 +137,16 @@ def _mode(body: dict, default: str) -> str:
     return mode
 
 
+def _choice(body: dict, key: str, choices: Sequence[str]) -> str:
+    """One of a fixed set of values; missing or empty means the first one (the default)."""
+    value = body.get(key)
+    if value is None or value == "":
+        return choices[0]
+    if not isinstance(value, str) or value not in choices:
+        raise ServiceError(422, "bad_field", f"'{key}' must be one of {list(choices)}.")
+    return value
+
+
 def _threats(body: dict) -> List[str]:
     raw = _strs(body, "claimed_threats", max_items=len(THREAT_CHOICES) * 2)
     mapped = normalise_threats(raw)
@@ -205,16 +225,19 @@ def checks() -> dict:
             "modes": list(MODES)}
 
 
-def _one(body: dict, limits: Limits, mode: str, *, path_default: str = "input") -> FileReport:
+def _one(body: dict, limits: Limits, mode: str, *,
+         path_default: str = "input") -> Callable[[], FileReport]:
+    """Validate one pair and return its verification, to run once every input is valid."""
     path = _str(body, "path", max_len=300, default=path_default) or path_default
     before = _str(body, "before", max_len=limits.max_chars)
     after = _str(body, "after", max_len=limits.max_chars, required=True)
     lang = _resolve_language(body, path, after or before)
     use_analyser = _bool(body, "analyser")
     if mode == "gate" and is_analyser_config(path):
-        return config_weakening(path, before, after, "modified" if before else "added")
-    return verify_pair(
-        before, after, path=path, language=lang, claimed_threats=_threats(body),
+        return functools.partial(config_weakening, path, before, after,
+                                 "modified" if before else "added")
+    return functools.partial(
+        verify_pair, before, after, path=path, language=lang, claimed_threats=_threats(body),
         strict_api=_bool(body, "strict_api"), must_preserve=_strs(body, "must_preserve", max_items=200),
         expect_change=(mode == "verify"), run_tools=use_analyser and _analyser_ok(),
         warn_only=_strs(body, "warn_only", max_items=40),
@@ -226,8 +249,9 @@ def verify(body: Any, limits: Optional[Limits] = None) -> dict:
     body = _need_obj(body)
     limits = limits or Limits.from_env()
     mode = _mode(body, "verify")
-    report = _one(body, limits, mode)
-    out = _envelope([report], mode, fmt=_format(body))
+    fmt = _format(body)
+    report = _one(body, limits, mode)()
+    out = _envelope([report], mode, fmt=fmt)
     if isinstance(out, dict) and "files" in out and _bool(body, "analyser") and not _analyser_ok():
         out["notes"] = ["Analyser evidence was requested but bandit is not installed; none was collected."]
     return out
@@ -238,6 +262,7 @@ def verify_batch(body: Any, limits: Optional[Limits] = None) -> dict:
     body = _need_obj(body)
     limits = limits or Limits.from_env()
     mode = _mode(body, "gate")
+    fmt = _format(body)
     files = body.get("files")
     if not isinstance(files, list) or not files:
         raise ServiceError(422, "missing_field", "'files' must be a non-empty list of {path, before, after}.")
@@ -246,10 +271,14 @@ def verify_batch(body: Any, limits: Optional[Limits] = None) -> dict:
     total = 0
     common = {k: body[k] for k in ("claimed_threats", "strict_api", "must_preserve", "analyser",
                                    "warn_only", "language") if k in body}
-    reports: List[FileReport] = []
+    jobs: List[Callable[[], FileReport]] = []
     skipped: List[str] = []
     for i, item in enumerate(files):
-        item = _need_obj(item)
+        if not isinstance(item, dict):
+            raise ServiceError(422, "bad_field", f"files[{i}] must be an object with path, before and after.")
+        for key in ("before", "after"):
+            if item.get(key) is not None and not isinstance(item[key], str):
+                raise ServiceError(422, "bad_field", f"files[{i}].{key} must be a string.")
         total += len(item.get("before") or "") + len(item.get("after") or "")
         if total > limits.max_total_chars:
             raise ServiceError(413, "too_large", f"Total input exceeds {limits.max_total_chars} characters.")
@@ -259,8 +288,9 @@ def verify_batch(body: Any, limits: Optional[Limits] = None) -> dict:
         if lang == "unknown" and not is_analyser_config(path) and not merged.get("language"):
             skipped.append(f"{path}: language not recognised")
             continue
-        reports.append(_one(merged, limits, mode))
-    return _envelope(reports, mode, skipped, fmt=_format(body))
+        jobs.append(_one(merged, limits, mode))
+    # Verification runs only after every file and option passed validation.
+    return _envelope([job() for job in jobs], mode, skipped, fmt=fmt)
 
 
 # ---- local-only operations ---------------------------------------------------------------
@@ -278,6 +308,7 @@ def git_diff(body: Any, limits: Optional[Limits] = None) -> dict:
     """Gate the changes in a local git repository (local app only)."""
     body = _need_obj(body)
     mode = "gate"
+    fmt = _format(body)
     repo = _str(body, "repo", max_len=500, required=True)
     if not os.path.isdir(os.path.join(repo, ".git")) and not os.path.isfile(os.path.join(repo, ".git")):
         raise ServiceError(422, "not_a_repo", "That folder is not a git repository (no .git).")
@@ -285,22 +316,28 @@ def git_diff(body: Any, limits: Optional[Limits] = None) -> dict:
     head = _str(body, "head", max_len=200)
     head = _ref(head, "head") if head else None
     staged = _bool(body, "staged")
+    no_merge_base = _bool(body, "no_merge_base")
     paths = _strs(body, "paths", max_items=50, max_len=300)
     if any(p.startswith("-") for p in paths):
         raise ServiceError(422, "bad_field", "Paths must not start with '-'.")
+    # Every option is read once and checked before git runs or any file is verified.
+    threats = _threats(body)
+    strict_api = _bool(body, "strict_api")
+    must_preserve = _strs(body, "must_preserve", max_items=200)
+    run_tools = _bool(body, "analyser") and _analyser_ok()
+    warn_only = _strs(body, "warn_only", max_items=40)
     try:
         sha, files, skipped = changed_files(base, head=head, staged=staged,
-                                            merge_base=not _bool(body, "no_merge_base"),
+                                            merge_base=not no_merge_base,
                                             paths=paths, cwd=repo)
     except GitError as exc:
         raise ServiceError(422, "git_error", str(exc)[:300]) from None
     if len(files) > 200:
         raise ServiceError(413, "too_many_files", f"{len(files)} files changed; limit is 200. Narrow with paths.")
-    threats = _threats(body)
     reports: List[FileReport] = []
     for cf in files:
         if cf.unreadable:
-            reports.append(unreadable_report(cf, _strs(body, "warn_only", max_items=40)))
+            reports.append(unreadable_report(cf, warn_only))
             continue
         if is_analyser_config(cf.path):
             reports.append(config_weakening(cf.path, cf.before, cf.after, cf.change))
@@ -311,10 +348,9 @@ def git_diff(body: Any, limits: Optional[Limits] = None) -> dict:
             continue
         reports.append(verify_pair(
             cf.before, cf.after, path=cf.path, language=lang, claimed_threats=threats,
-            strict_api=_bool(body, "strict_api"), must_preserve=_strs(body, "must_preserve", max_items=200),
-            expect_change=False, run_tools=_bool(body, "analyser") and _analyser_ok(),
-            warn_only=_strs(body, "warn_only", max_items=40), change=cf.change))
-    out = _envelope(reports, mode, skipped, fmt=_format(body))
+            strict_api=strict_api, must_preserve=must_preserve,
+            expect_change=False, run_tools=run_tools, warn_only=warn_only, change=cf.change))
+    out = _envelope(reports, mode, skipped, fmt=fmt)
     if isinstance(out, dict) and "files" in out:
         out["base"] = sha
     return out
@@ -370,18 +406,24 @@ def harden(body: Any) -> dict:
         raise ServiceError(422, "bad_field", f"Unknown provider; choose from {sorted(PROVIDERS)}.")
     lang = _resolve_language(body, path or "input", code)
     model = _str(body, "model", max_len=200)
+    # Every input is checked before the model is asked, so no paid call is spent on a
+    # request that would then be refused for its input.
+    contract = Contract(
+        threat_model=_threats({"claimed_threats": body.get("threats")}),
+        compat=_choice(body, "compat", COMPAT_CHOICES),
+        dependencies=_choice(body, "dependencies", DEPENDENCY_CHOICES),
+        error_policy=_choice(body, "error_policy", ERROR_POLICY_CHOICES),
+        must_preserve=_strs(body, "must_preserve", max_items=200), notes=_str(body, "notes", max_len=4000))
+    run_tools = _bool(body, "analyser") and _analyser_ok()
+    write = _bool(body, "write")
+    if write:                                   # checked again just before writing
+        _unchanged_text(path, code)
     try:
         config = LLMConfig.from_env(provider=provider, model=model or None)
     except LLMError as exc:
         raise ServiceError(422, "provider_error", str(exc)) from None
-    contract = Contract(
-        threat_model=_threats({"claimed_threats": body.get("threats")}),
-        compat=_str(body, "compat", max_len=40, default="strict_api") or "strict_api",
-        dependencies=_str(body, "dependencies", max_len=40, default="stdlib_only") or "stdlib_only",
-        error_policy=_str(body, "error_policy", max_len=40, default="fail_closed") or "fail_closed",
-        must_preserve=_strs(body, "must_preserve", max_items=200), notes=_str(body, "notes", max_len=4000))
     try:
-        result = run_hardening(code, lang, contract, config, run_tools=_bool(body, "analyser") and _analyser_ok())
+        result = run_hardening(code, lang, contract, config, run_tools=run_tools)
     except LLMError as exc:
         raise ServiceError(502, "model_error", str(exc)) from None
     out = result.as_dict()
@@ -393,7 +435,7 @@ def harden(body: Any) -> dict:
                     fromfile=f"a/{name}", tofile=f"b/{name}", lineterm=""))})
     if not result.blocked:
         out["result_id"] = _keep_verified(code, result.proposed)
-    if _bool(body, "write"):
+    if write:
         if result.blocked:
             raise ServiceError(409, "blocked", "Verification blocked this output; nothing was written.")
         _write_verified(path, code, result.proposed)
@@ -417,19 +459,74 @@ def _keep_verified(code: str, proposed: str) -> str:
     return result_id
 
 
-def _write_verified(path: str, code: str, proposed: str) -> None:
+_NOT_UTF8 = ("That file is not UTF-8 text. Saikou only opens and writes UTF-8 files: "
+             "writing any other encoding back as UTF-8 would change characters in it.")
+
+
+def _utf8(raw: bytes) -> str:
+    """Strict: a byte that is not UTF-8 is refused, never replaced."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ServiceError(422, "not_utf8", _NOT_UTF8) from None
+
+
+def _unchanged_text(path: str, code: str) -> str:
+    """The file's current text, if it still holds `code`; otherwise a ServiceError."""
     if not path or not os.path.isfile(path):
         raise ServiceError(422, "bad_field", "'path' must be an existing file to write to.")
-    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
-        current = fh.read()
+    with open(path, "rb") as fh:
+        current = _utf8(fh.read())
     # Compare content, not line-ending style: browsers and text-mode reads turn CRLF into LF.
     if current.replace("\r\n", "\n") != code.replace("\r\n", "\n"):
         raise ServiceError(409, "file_changed", "The file changed since it was loaded; reload it before writing.")
+    return current
+
+
+def _replace_file(target: str, data: bytes) -> None:
+    """Write `data` to a temporary file next to `target`, then swap it in with os.replace:
+    a failure part-way leaves the old file as it was, never an empty or half one."""
+    folder = os.path.dirname(target) or "."
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(target) + ".", suffix=".saikou-tmp",
+                               dir=folder)
+    os.close(fd)
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            shutil.copymode(target, tmp)        # mkstemp makes the file private (0600)
+        except OSError:
+            pass                                # content still lands; only the mode is lost
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.chmod(tmp, stat.S_IREAD | stat.S_IWRITE)   # a read-only copy cannot be removed on Windows
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _write_verified(path: str, code: str, proposed: str) -> None:
+    # Through a symlink to its target, as an in-place write would; os.replace on the link
+    # itself would turn it into a plain file.
+    target = os.path.realpath(path) if path else path
+    current = _unchanged_text(target, code)
     proposed = proposed.replace("\r\n", "\n")
     if "\r\n" in current:                       # keep the file's own line-ending style
         proposed = proposed.replace("\n", "\r\n")
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write(proposed)
+    try:
+        data = proposed.encode("utf-8")         # before the file is touched
+    except UnicodeEncodeError:
+        raise ServiceError(422, "not_encodable", "The result holds characters that cannot be "
+                           "written as UTF-8; the file was not changed.") from None
+    try:
+        _replace_file(target, data)
+    except OSError as exc:
+        raise ServiceError(500, "write_failed", f"Could not write the file "
+                           f"({exc.strerror or type(exc).__name__}); it was not changed.") from None
 
 
 def write_result(body: Any) -> dict:
@@ -462,7 +559,7 @@ def read_file(body: Any) -> dict:
         raw = fh.read()
     if b"\x00" in raw[:8192]:
         raise ServiceError(422, "binary", "That looks like a binary file.")
-    text = raw.decode("utf-8", "replace")
+    text = _utf8(raw)
     if len(text) > limits.max_chars:
         raise ServiceError(413, "too_large", f"File has {len(text)} characters; the limit is {limits.max_chars}.")
     return {"path": path, "content": text, "language": language_for_path(path)}
