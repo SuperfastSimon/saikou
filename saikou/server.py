@@ -9,19 +9,27 @@ verified hardening result, so it is locked to this machine and this browser sess
   server or put in a Referer; every /api call must echo it in the X-Saikou-Token header;
 - the Host header must name this server, which stops DNS rebinding, and a request from any
   other Origin is refused;
-- POST bodies must be JSON and are capped in size.
+- POST bodies must be JSON and are capped in size;
+- the browser is opened on a private temporary page that redirects to the link, so the key
+  never appears on a command line (`ps` and /proc/*/cmdline are readable by other users).
 """
 
 from __future__ import annotations
 
+import atexit
+import html
 import json
 import os
 import secrets
+import shutil
 import sys
+import tempfile
+import threading
 import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Dict, Optional, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional, Set, Tuple
 from urllib.parse import urlsplit
 
 from . import service, webassets
@@ -29,6 +37,19 @@ from .engine import __version__
 from .service import ServiceError
 
 MAX_BODY_BYTES = 2_000_000
+# How long the redirect page that carries the key stays on disk. A browser that is still
+# starting may read it late, so this is generous; the page goes at shutdown in any case.
+REDIRECT_PAGE_TTL_S = 60.0
+
+
+def allowed_hosts(port: int) -> Tuple[Set[str], Set[str]]:
+    """The Host and Origin values that name this server on `port`. A browser leaves out the
+    default port, so on port 80 it sends `Host: 127.0.0.1` and `Origin: http://127.0.0.1`;
+    on any other port those portless forms name a different server and stay refused."""
+    hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    if port == 80:
+        hosts |= {"127.0.0.1", "localhost"}
+    return hosts, {f"http://{h}" for h in hosts}
 
 
 def _meta(server: "AppServer") -> dict:
@@ -60,9 +81,7 @@ class AppServer(ThreadingHTTPServer):
         self.token = token or secrets.token_urlsafe(24)
         self.repo = repo
         self.verbose = verbose
-        bound = self.server_address[1]
-        self.hosts = {f"127.0.0.1:{bound}", f"localhost:{bound}"}
-        self.origins = {f"http://{h}" for h in self.hosts}
+        self.hosts, self.origins = allowed_hosts(self.server_address[1])
 
     @property
     def url(self) -> str:
@@ -225,6 +244,68 @@ def default_repo(path: Optional[str]) -> Optional[str]:
     return None
 
 
+_REDIRECT_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="refresh" content="0;url={url}">
+<title>Opening Saikou</title>
+</head>
+<body>
+<p>Opening Saikou. If nothing happens, <a href="{url}" rel="noreferrer">open the app</a>.</p>
+</body>
+</html>
+"""
+
+
+def _write_redirect_page(url: str) -> str:
+    """Write a page that sends the browser to `url` into a new private temporary folder
+    (mkdtemp: 0700; the page itself 0600) and return its path."""
+    folder = tempfile.mkdtemp(prefix="saikou-ui-")
+    path = os.path.join(folder, "open.html")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(_REDIRECT_PAGE.format(url=html.escape(url, quote=True)))
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return path
+
+
+def _open_in_browser(url: str, ttl: float = REDIRECT_PAGE_TTL_S) -> Callable[[], None]:
+    """Open `url` in the browser without putting it on a command line.
+
+    webbrowser starts the browser (or xdg-open) with its argument in argv, which other users
+    can read; so the browser gets a file:// link to a private page that redirects to `url`,
+    the way Jupyter does it. The page is removed after `ttl` seconds, at shutdown (call the
+    returned function) or at interpreter exit, whichever comes first. If the page cannot be
+    written, nothing is opened: the printed link is the way in."""
+    try:
+        path = _write_redirect_page(url)
+    except OSError as exc:
+        print(f"saikou ui: could not prepare the browser page ({exc}); open the link above.",
+              file=sys.stderr, flush=True)
+        return lambda: None
+    folder = os.path.dirname(path)
+
+    def remove() -> None:
+        timer.cancel()
+        shutil.rmtree(folder, ignore_errors=True)
+
+    timer = threading.Timer(ttl, remove)
+    timer.daemon = True
+    timer.start()
+    atexit.register(remove)
+    try:
+        webbrowser.open(Path(path).as_uri())
+    except Exception as exc:  # a broken browser setup must not stop the server
+        print(f"saikou ui: could not open a browser ({exc}); open the link above.",
+              file=sys.stderr, flush=True)
+    return remove
+
+
 def serve(port: int = 0, open_browser: bool = True, repo: Optional[str] = None,
           verbose: bool = False) -> int:
     server = AppServer(port, default_repo(repo), verbose=verbose)
@@ -232,12 +313,14 @@ def serve(port: int = 0, open_browser: bool = True, repo: Optional[str] = None,
     print(f"Saikou {__version__} is running at:\n\n    {url}\n\n"
           "The link holds a key for this session only; anyone who has it can use the app "
           "on this machine.\nPress Ctrl+C to stop.", flush=True)
+    cleanup: Callable[[], None] = lambda: None
     if open_browser:
-        webbrowser.open(url)
+        cleanup = _open_in_browser(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        cleanup()
         server.server_close()
     return 0

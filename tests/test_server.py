@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import threading
 from pathlib import Path
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 import pytest
 
@@ -172,6 +174,132 @@ def test_cli_ui_starts_the_server(monkeypatch):
     monkeypatch.setattr(server, "serve", lambda **kw: seen.update(kw) or 0)
     assert main(["ui", "--no-browser", "--port", "0", "--env-file", "does-not-exist.env"]) == 0
     assert seen["open_browser"] is False and seen["port"] == 0
+
+
+# ---- the session key never reaches a command line (review 13) ---------------------------------
+
+def _page_of(uri):
+    return Path(url2pathname(urlsplit(uri).path))
+
+
+def _serve_once(monkeypatch, open_browser):
+    """Run server.serve() until it has opened (or not opened) the browser, then stop it."""
+    opened = []
+
+    def fake_open(target, *_a, **_k):
+        # webbrowser passes this string to the browser (or xdg-open) on its command line
+        entry = {"arg": target}
+        if target.startswith("file:"):
+            page = _page_of(target)
+            entry.update(page=page, html=page.read_text(encoding="utf-8"),
+                         mode=page.stat().st_mode & 0o777, dir_mode=page.parent.stat().st_mode & 0o777)
+        opened.append(entry)
+        return True
+
+    def stop(self, *_a, **_k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(server.webbrowser, "open", fake_open)
+    monkeypatch.setattr(server.AppServer, "serve_forever", stop)
+    monkeypatch.setattr(server.secrets, "token_urlsafe", lambda _n: "k3y-only-for-this-test")
+    assert server.serve(port=0, open_browser=open_browser) == 0
+    return opened
+
+
+def test_browser_is_opened_without_the_key_on_its_command_line(monkeypatch, capsys):
+    opened = _serve_once(monkeypatch, open_browser=True)
+    assert len(opened) == 1
+    arg = opened[0]["arg"]
+    assert "k3y-only-for-this-test" not in arg and "#t=" not in arg
+    assert arg.startswith("file:") and arg.endswith(".html")
+    page = opened[0]["html"]
+    assert re.search(r'http-equiv="refresh" content="0;url=http://127\.0\.0\.1:\d+/#t=k3y-only-for-this-test"',
+                     page), page
+    if server.os.name == "posix":
+        assert opened[0]["mode"] == 0o600 and opened[0]["dir_mode"] == 0o700
+    assert not opened[0]["page"].exists() and not opened[0]["page"].parent.exists()  # gone at shutdown
+    assert "#t=k3y-only-for-this-test" in capsys.readouterr().out                  # link still printed
+
+
+def test_no_browser_prints_the_link_and_writes_nothing(monkeypatch, capsys):
+    assert _serve_once(monkeypatch, open_browser=False) == []
+    assert "#t=k3y-only-for-this-test" in capsys.readouterr().out
+
+
+def test_redirect_page_is_removed_after_its_lifetime(monkeypatch):
+    seen = []
+    monkeypatch.setattr(server.webbrowser, "open", lambda target, *a, **k: seen.append(target) or True)
+    remove = server._open_in_browser("http://127.0.0.1:1/#t=TTL-KEY", ttl=0.05)
+    page = _page_of(seen[0])
+    assert "TTL-KEY" not in seen[0]
+    for _ in range(200):
+        if not page.exists():
+            break
+        threading.Event().wait(0.02)
+    assert not page.parent.exists()
+    remove()                                                       # a second removal is harmless
+
+
+def test_redirect_page_escapes_the_link():
+    path = Path(server._write_redirect_page('http://127.0.0.1:1/#t="><script>x</script>'))
+    try:
+        text = path.read_text(encoding="utf-8")
+        assert "<script>" not in text and "&quot;&gt;&lt;script&gt;" in text
+    finally:
+        shutil.rmtree(path.parent)
+
+
+def test_unwritable_temp_folder_opens_nothing(monkeypatch, capsys):
+    def broken(*_a, **_k):
+        raise OSError("no space left")
+    seen = []
+    monkeypatch.setattr(server.tempfile, "mkdtemp", broken)
+    monkeypatch.setattr(server.webbrowser, "open", lambda *a, **k: seen.append(a) or True)
+    server._open_in_browser("http://127.0.0.1:1/#t=abc")()
+    assert seen == [] and "open the link above" in capsys.readouterr().err
+
+
+# ---- port 80: browsers leave the default port out of Host and Origin (review 17) ---------------
+
+def test_port_80_accepts_the_portless_host_and_origin():
+    hosts, origins = server.allowed_hosts(80)
+    assert {"127.0.0.1", "localhost", "127.0.0.1:80", "localhost:80"} == hosts
+    assert {"http://127.0.0.1", "http://localhost", "http://127.0.0.1:80", "http://localhost:80"} == origins
+
+
+def test_other_ports_still_refuse_the_portless_forms():
+    hosts, origins = server.allowed_hosts(8765)
+    assert hosts == {"127.0.0.1:8765", "localhost:8765"}
+    assert origins == {"http://127.0.0.1:8765", "http://localhost:8765"}
+    hosts80, origins80 = server.allowed_hosts(80)
+    for bad in ("127.0.0.1:8765", "evil.example", "evil.example:80", "127.0.0.2", "[::1]", ""):
+        assert bad not in hosts80
+    assert "https://127.0.0.1" not in origins80 and "http://evil.example" not in origins80
+
+
+def test_portless_host_is_refused_on_a_non_default_port(app):
+    assert request(app, "GET", "/api/checks", host="127.0.0.1")[0] == 421
+    assert request(app, "GET", "/api/checks", host="localhost")[0] == 421
+
+
+def test_port_80_server_answers_a_browser_request():
+    try:
+        srv = server.AppServer(80, token="test-session-key")
+    except OSError as exc:  # port 80 needs privileges on Linux/macOS, or is taken
+        pytest.skip(f"cannot bind 127.0.0.1:80 here: {exc}")
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert request(srv, "GET", "/api/checks", host="127.0.0.1")[0] == 200
+        status, _, _ = request(srv, "POST", "/api/verify", {"after": "x = 1\n"}, host="localhost",
+                               headers={"Origin": "http://127.0.0.1"})
+        assert status == 200
+        assert request(srv, "GET", "/api/checks", host="127.0.0.1:8080")[0] == 421
+        assert request(srv, "POST", "/api/verify", {"after": "x = 1\n"}, host="127.0.0.1",
+                       headers={"Origin": "http://127.0.0.1:8080"})[0] == 403
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 # ---- the web app's own guarantees ------------------------------------------------------------

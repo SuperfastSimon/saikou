@@ -196,7 +196,9 @@ It needs no extra package and no build step, and it makes no third-party request
   it prints holds a one-time session key in the URL fragment (`#t=...`); every call to the
   app's API must send it, and a request whose `Host` is not this server or whose `Origin` is
   another site is refused. Anyone who has the link can use the app on that machine, so do
-  not share it.
+  not share it. The browser is started on a private temporary page that redirects to the
+  link (removed after a minute or when the app stops), so the key is never on a command
+  line that other users of the machine can read.
 - **Keys stay in the environment.** Harden reads provider keys from the environment or from
   `.env` (`--env-file`); the app shows only whether a key is set, never its value.
 
