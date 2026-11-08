@@ -108,6 +108,32 @@ def test_sarif_upload_requirements_are_stated_in_full():
     assert re.search(r"^      actions: read\b", dogfood, re.M)
 
 
+USES = re.compile(r"^\s*(?:- )?uses:\s*(\S+)(.*)$", re.M)
+# Majors that run on the deprecated Node 20 (checkout, setup-*) or expire in December 2026
+# (codeql-action v3): the pinned version must be newer.
+DEPRECATED_MAJOR = {"actions/checkout": 4, "actions/setup-python": 5, "actions/setup-node": 4,
+                    "github/codeql-action": 3}
+
+
+def test_every_external_action_is_pinned_to_a_commit():
+    """Review G6: a tag or branch can be moved; a full commit SHA cannot. The comment names the
+    release the SHA was taken from."""
+    files = [ACTION, *sorted((ROOT / ".github" / "workflows").glob("*.yml"))]
+    seen = 0
+    for f in files:
+        for m in USES.finditer(f.read_text(encoding="utf-8")):
+            ref, rest = m.group(1), m.group(2)
+            if ref.startswith("./"):
+                continue
+            seen += 1
+            assert re.fullmatch(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}", ref), (f.name, ref)
+            version = re.fullmatch(r"\s+# v(\d+)\.\d+\.\d+", rest)
+            assert version, (f.name, ref, rest)
+            repo = "/".join(ref.split("@")[0].split("/")[:2])
+            assert int(version.group(1)) > DEPRECATED_MAJOR.get(repo, 0), (f.name, ref, rest)
+    assert seen >= 10
+
+
 def _plant(folder: Path) -> Path:
     """A workspace that holds its own saikou, pip and bandit packages and a sitecustomize."""
     marker = folder / "PLANTED-CODE-RAN"

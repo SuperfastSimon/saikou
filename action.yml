@@ -79,7 +79,7 @@ runs:
         echo "skipped=$skipped" >> "$GITHUB_OUTPUT"
 
     - if: steps.gate.outputs.skipped != 'true'
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
       with:
         python-version: "3.12"
 
@@ -133,7 +133,7 @@ runs:
         if [ "$code" -eq 1 ]; then echo "blocked=true" >> "$GITHUB_OUTPUT"; else echo "blocked=false" >> "$GITHUB_OUTPUT"; fi
 
     - if: steps.gate.outputs.skipped != 'true' && inputs.upload-sarif == 'true' && always()
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
       with:
         sarif_file: saikou.sarif
         category: saikou
