@@ -211,9 +211,20 @@ _c("parse_skipped", "parser", "warn", "python", "both",
       "zijn overgeslagen; alleen tekstchecks draaiden."))
 
 # ---- dangerous sinks --------------------------------------------------------------------
-_SINK = _t("A sink that is new in the output always blocks. One that was already there blocks "
+_SINK = _t("Values count as the file itself fixes them: a constant, not, and/or, bool(...), or a "
+           "name assigned exactly once in the file with name = value (also a function called "
+           "through such a name, as in _e = eval). A parameter, a call result or a name "
+           "assigned more than once is unknown and never counts; a list, dict or set counts "
+           "through its name only when the name is used nowhere but as **name. "
+           "A sink that is new in the output always blocks. One that was already there blocks "
            "only when a fix for that threat class was claimed; otherwise it is a warning "
            "naming what was left alone.",
+           "Waarden tellen zoals het bestand ze zelf vastlegt: een constante, not, and/or, "
+           "bool(...), of een naam die precies één keer in het bestand wordt toegekend met "
+           "naam = waarde (ook een functie die via zo'n naam wordt aangeroepen, zoals "
+           "_e = eval). Een parameter, de uitkomst van een aanroep of een naam die vaker wordt "
+           "toegekend is onbekend en telt nooit; een list, dict of set telt via zijn naam alleen "
+           "als die naam nergens anders dan als **naam wordt gebruikt. "
            "Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert "
            "alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een "
            "waarschuwing die benoemt wat is blijven staan.")
@@ -225,16 +236,23 @@ def _sink(cid: str, en: str, nl: str, ed: str, nd: str, bad: str, good: str) -> 
 
 
 _sink("sink_shell_true", "shell=True", "shell=True",
-      "A subprocess call runs through a shell, so injected text becomes commands.",
-      "Een subprocess-aanroep loopt via een shell, waardoor ingevoegde tekst commando's wordt.",
+      "A call runs its command through a shell, so injected text becomes commands: shell= "
+      "is true (True, 1, not False, ...), also when passed in **{...} or **dict(...).",
+      "Een aanroep laat zijn commando via een shell lopen, waardoor ingevoegde tekst "
+      "commando's wordt: shell= is waar (True, 1, not False, ...), ook als het via **{...} of "
+      "**dict(...) wordt meegegeven.",
       "subprocess.call(\"rsync \" + src, shell=True)", "subprocess.run([\"rsync\", src])")
 _sink("sink_tls_verify_off", "TLS verification off", "TLS-controle uit",
-      "verify=False disables certificate checking.",
-      "verify=False schakelt de certificaatcontrole uit.",
+      "Certificate checking is switched off: verify= is false (False, 0, None, bool(0), ...) "
+      "in a call, also via **{...}, or an attribute is set that way (session.verify = False).",
+      "De certificaatcontrole staat uit: verify= is onwaar (False, 0, None, bool(0), ...) in "
+      "een aanroep, ook via **{...}, of een attribuut wordt zo gezet (session.verify = False).",
       "requests.get(url, verify=False)", "requests.get(url)")
 _sink("sink_debug_true", "debug=True", "debug=True",
-      "A web app runs in debug mode, exposing an interactive console.",
-      "Een webapp draait in debugmodus en toont een interactieve console.",
+      "A web app runs in debug mode, exposing an interactive console: run(...) with debug= "
+      "true.",
+      "Een webapp draait in debugmodus en toont een interactieve console: run(...) met "
+      "debug= waar.",
       "app.run(debug=True)", "app.run()")
 _sink("sink_dynamic_exec", "eval/exec on a variable", "eval/exec op een variabele",
       "eval() or exec() on something that is not a literal.",
@@ -245,8 +263,11 @@ _sink("sink_sql_interpolated", "SQL built by interpolation", "SQL door samenvoeg
       "Een querystring wordt met f-string, % of + opgebouwd en aan execute() gegeven.",
       "cur.execute(f\"SELECT * FROM t WHERE n='{n}'\")", "cur.execute(\"SELECT * FROM t WHERE n=?\", (n,))")
 _sink("sink_sql_nonparameterised", "SQL without parameters", "SQL zonder parameters",
-      "execute() receives a computed string and no parameter argument.",
-      "execute() krijgt een berekende string zonder parameterargument.",
+      "execute() receives a computed string and no parameter argument, or an empty one "
+      "((), [], {}, None). A string literal, or a name assigned one once, is not computed.",
+      "execute() krijgt een berekende string zonder parameterargument, of met een leeg "
+      "((), [], {}, None). Een stringliteral, of een naam die er één keer een krijgt, is niet "
+      "berekend.",
       "cur.execute(query)", "cur.execute(query, params)")
 _sink("sink_weak_hash_secret", "Weak hash over a password", "Zwakke hash over wachtwoord",
       "MD5 or SHA-1 applied to password-class data. Use a password KDF (scrypt, argon2, PBKDF2).",
