@@ -193,9 +193,14 @@ _c("cosmetic_only_change", "parser", "hard", "python", "verify",
 _c("parse_failure", "parser", "hard", "python", "both",
    _t("Output no longer parses", "Uitvoer parset niet meer"),
    _t("The input parsed as Python but the output does not. It cannot be verified and would "
-      "break at import.",
+      "break at import. Code that nests too deeply for Python to parse or analyse (a very long "
+      "chain of +, say, where Python raises RecursionError or MemoryError) blocks too, in either "
+      "version and in both modes, because it was not analysed.",
       "De invoer parsete als Python maar de uitvoer niet. Het kan niet worden geverifieerd en "
-      "zou bij importeren breken."))
+      "zou bij importeren breken. Code die te diep genest is om door Python te laten parsen of "
+      "analyseren (bijvoorbeeld een heel lange reeks +, waarbij Python RecursionError of "
+      "MemoryError geeft) blokkeert ook, in beide versies en in beide modi, omdat die niet is "
+      "geanalyseerd."))
 _c("parse_skipped", "parser", "warn", "python", "both",
    _t("Neither version parses", "Geen van beide versies parset"),
    _t("Both versions fail to parse as Python (a template, Python 2, or a fragment). AST checks "

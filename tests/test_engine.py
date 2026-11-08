@@ -654,3 +654,82 @@ def test_gating_a_new_empty_file_is_not_blocked():
     assert [f.check for f in findings if f.severity is Severity.HARD_FAIL] == []
     strict = scan_transformation("x = 1\n", "", language="python", expect_change=True)
     assert "empty_output" in [f.check for f in strict]
+
+
+# ---- code that nests too deeply to parse or analyse (finding 8) --------------------------
+
+# 40,004 characters: under the hosted API's 60,000, and too deep for ast.parse on 3.11-3.13.
+DEEP = "x = " + "+".join(["1"] * 20_000) + "\n"
+# Parses everywhere, but ast.dump (the comment-only check) recurses out at the default limit.
+MID = "x = " + "+".join(["1"] * 1_500) + "\n"
+SHELL = "import subprocess\nsubprocess.run(cmd, shell=True)\n"
+
+
+def _only_too_deep(findings):
+    return ([(f.check, f.severity) for f in findings] == [("parse_failure", Severity.HARD_FAIL)]
+            and "nests too deeply" in findings[0].detail)
+
+
+@pytest.mark.parametrize("exc", [RecursionError, MemoryError])
+@pytest.mark.parametrize("expect_change", [True, False])
+def test_parser_giving_up_is_a_parse_failure_not_an_exception(engine_ast_raises, exc,
+                                                              expect_change):
+    engine_ast_raises("parse", exc)
+    for before, after in (("x = 1\n", SHELL), (SHELL, "x = 1\n"), ("", SHELL)):
+        assert _only_too_deep(scan_transformation(before, after, language="python",
+                                                  expect_change=expect_change,
+                                                  claimed_threats=["injection"]))
+
+
+def test_a_check_giving_up_after_parsing_is_a_parse_failure(engine_ast_raises):
+    # Between about 1,000 and 3,000 terms (3.11, default limit) the code parses, but
+    # ast.dump in the comment-only check recursed out and the exception escaped.
+    engine_ast_raises("dump", RecursionError)
+    assert _only_too_deep(scan_transformation(SHELL, SHELL + "y = 2\n", language="python"))
+
+
+def test_too_deep_api_diff_and_ledger(engine_ast_raises):
+    engine_ast_raises("parse", RecursionError)
+    diff = engine.diff_python_surface("def f():\n    pass\n", "def f(a):\n    pass\n")
+    assert not diff.parsed and diff.too_deep and "nests too deeply" in diff.parse_error
+    assert engine.python_surface("def f():\n    pass\n") is None
+    ledger = engine.assemble_ledger("x = 1\n", SHELL, "python", engine.Tier.AST_VERIFIED,
+                                    engine.Contract(), [], [], run_tools=False)
+    hard = [f for f in ledger.findings if f.severity is Severity.HARD_FAIL]
+    assert [f.check for f in hard] == ["parse_failure"] and "nests too deeply" in hard[0].detail
+
+
+def _raises(fn, *args):
+    try:
+        fn(*args)
+    except RecursionError:
+        return True
+    return False
+
+
+def test_real_deep_expression_does_not_escape_as_an_exception():
+    import ast
+
+    too_deep_here = _raises(ast.parse, DEEP)
+    for before, after, change in (("x = 1\n", DEEP, True), ("", DEEP, False),
+                                  (DEEP, DEEP + "y = 2\n", False)):
+        findings = scan_transformation(before, after, language="python", expect_change=change)
+        if too_deep_here:
+            assert _only_too_deep(findings)
+    ledger = engine.assemble_ledger("x = 1\n", DEEP, "python", engine.Tier.AST_VERIFIED,
+                                    engine.Contract(), [], [], run_tools=False)
+    if too_deep_here:
+        assert [f.check for f in ledger.findings if f.severity is Severity.HARD_FAIL] == [
+            "parse_failure"]
+
+
+def test_real_expression_that_parses_but_is_too_deep_to_compare():
+    import ast
+
+    if not _raises(lambda: ast.dump(ast.parse(MID))):
+        pytest.skip("ast.dump handles this depth here")
+    assert _only_too_deep(scan_transformation("x = 1\n", MID, language="python"))
+    # Change gating does not compare syntax trees, so the same file passes there.
+    assert [f.check for f in scan_transformation("x = 1\n", MID, language="python",
+                                                 expect_change=False)
+            if f.severity is Severity.HARD_FAIL] == []

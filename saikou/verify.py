@@ -142,6 +142,9 @@ def verify_pair(before: str, after: str, *, path: str, language: Optional[str] =
 
     if lang == "python" and before.strip():
         diff = diff_python_surface(before, after)
+        if diff.too_deep and not any(f.check == "parse_failure" for f in findings):
+            # The scan got through, this deeper call did not: still not analysed.
+            findings.append(Finding("parse_failure", Severity.HARD_FAIL, diff.parse_error or ""))
         if diff.parsed:
             report.api = diff.as_dict()
             checks.append("api-surface")

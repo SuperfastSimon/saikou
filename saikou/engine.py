@@ -688,9 +688,12 @@ def _security_statement_lines(tree: ast.AST, predicate=_is_security_call) -> Set
 
 @lru_cache(maxsize=16)
 def _parsed(code: str) -> Optional[ast.AST]:
+    # RecursionError and MemoryError are left to the guard in scan_transformation: read
+    # as "does not parse" here, they emptied _security_lines, so a bare flake8 marker on
+    # a security statement quietly stopped blocking.
     try:
         return ast.parse(code)
-    except (SyntaxError, ValueError, RecursionError, MemoryError):
+    except (SyntaxError, ValueError):
         return None
 
 
@@ -2105,7 +2108,31 @@ def _call_compatible(b: Symbol, a: Symbol) -> bool:
     return (a.has_vararg or not b.has_vararg) and (a.has_kwarg or not b.has_kwarg)
 
 
+# Code that nests deeper than the interpreter allows (a chain of thousands of `+`, say)
+# makes the parser, or a check walking the tree, raise one of these. Where that happens
+# depends on the Python version and on the stack depth at the call, so any of them,
+# anywhere in a scan, means the code was not analysed.
+_TOO_DEEP = (RecursionError, MemoryError)
+TOO_DEEP_DETAIL = (
+    "The code nests too deeply to parse or analyse (Python raised RecursionError or "
+    "MemoryError), for example a very long chain of + or deeply nested brackets. Code that "
+    "was not analysed cannot be verified, so it blocks. Split the expression into smaller "
+    "parts.")
+
+
+def _too_deep() -> Finding:
+    return Finding("parse_failure", Severity.HARD_FAIL, TOO_DEEP_DETAIL)
+
+
 def python_surface(code: str) -> Optional[Dict[str, Symbol]]:
+    """Public top-level symbols, or None when `code` does not parse or nests too deeply."""
+    try:
+        return _surface(code)
+    except _TOO_DEEP:
+        return None
+
+
+def _surface(code: str) -> Optional[Dict[str, Symbol]]:
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError):
@@ -2132,6 +2159,7 @@ class SurfaceDiff:
     changed: List[dict] = field(default_factory=list)
     parse_error: Optional[str] = None
     compatible: List[dict] = field(default_factory=list)  # signature grew, old calls still valid
+    too_deep: bool = False      # not parsed because the code nests too deeply (not a syntax error)
 
     @property
     def breaks_api(self) -> bool:
@@ -2145,7 +2173,14 @@ class SurfaceDiff:
 
 
 def diff_python_surface(before: str, after: str) -> SurfaceDiff:
-    b, a = python_surface(before), python_surface(after)
+    try:
+        return _diff_surface(before, after)
+    except _TOO_DEEP:
+        return SurfaceDiff(False, parse_error=TOO_DEEP_DETAIL, too_deep=True)
+
+
+def _diff_surface(before: str, after: str) -> SurfaceDiff:
+    b, a = _surface(before), _surface(after)
     if b is None:
         return SurfaceDiff(False, parse_error="input did not parse as Python")
     if a is None:
@@ -2275,7 +2310,20 @@ def scan_transformation(before: str, after: str, *, language: str = "unknown",
     Whole-file properties (unwired guards, shared-sink paths, JS guard misuse)
     are compared against the input, so a defect that was already there is a
     warning - unless a fix for its threat class was claimed.
+
+    Code too deeply nested to parse or analyse, in either version, is a hard
+    `parse_failure` instead of an exception.
     """
+    try:
+        return _scan_transformation(before, after, language=language,
+                                    expect_full_module=expect_full_module,
+                                    claimed_threats=claimed_threats, expect_change=expect_change)
+    except _TOO_DEEP:
+        return [_too_deep()]
+
+
+def _scan_transformation(before: str, after: str, *, language: str, expect_full_module: bool,
+                         claimed_threats: Sequence[str], expect_change: bool) -> List[Finding]:
     language = normalise_language(language)
     claimed = normalise_threats(claimed_threats)
     strict = expect_change

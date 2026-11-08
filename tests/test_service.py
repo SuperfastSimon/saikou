@@ -451,3 +451,34 @@ def test_harden_write_keeps_crlf_files_crlf(tmp_path, monkeypatch):
                           "threats": ["injection"], "write": True})
     assert out["written"] is True
     assert path.read_bytes() == REAL_AFTER.replace("\n", "\r\n").encode()
+
+
+# ---- code that nests too deeply to parse or analyse (finding 8) --------------------------
+
+DEEP = "x = " + "+".join(["1"] * 20_000) + "\n"      # 40,004 characters, under the limit
+
+
+def test_too_deep_code_is_a_blocking_parse_failure_not_an_error(engine_ast_raises):
+    engine_ast_raises("parse", RecursionError)
+    for body in ({"path": "deep.py", "before": "x = 1\n", "after": "x = 2\n"},
+                 {"path": "deep.py", "after": "x = 2\n", "mode": "gate"}):
+        out = service.verify(body)
+        findings = out["files"][0]["findings"]
+        assert out["blocked"] is True and [f["check"] for f in findings] == ["parse_failure"]
+        assert "nests too deeply" in findings[0]["detail"]
+    batch = service.verify_batch({"files": [{"path": "deep.py", "after": "x = 2\n"}]})
+    assert batch["blocked"] is True
+
+
+def test_real_deep_expression_is_answered_not_raised():
+    import ast
+
+    try:
+        ast.parse(DEEP)
+        pytest.skip("this interpreter parses the expression")
+    except RecursionError:
+        pass
+    assert len(DEEP) < Limits().max_chars
+    out = service.verify({"path": "deep.py", "before": "x = 1\n", "after": DEEP})
+    assert out["blocked"] is True
+    assert [f["check"] for f in out["files"][0]["findings"]] == ["parse_failure"]

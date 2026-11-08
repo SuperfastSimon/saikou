@@ -85,6 +85,17 @@ def test_verify_batch_and_sarif(client):
     assert sarif.json()["version"] == "2.1.0"
 
 
+def test_code_too_deep_to_parse_is_a_report_not_a_500(client, engine_ast_raises):
+    # Finding 8: a deep expression within the size limit used to escape as a RecursionError.
+    engine_ast_raises("parse", RecursionError)
+    resp = client.post("/v1/verify", headers=AUTH, json={"path": "deep.py", "before": CODE,
+                                                         "after": REAL})
+    assert resp.status_code == 200 and resp.json()["blocked"] is True
+    assert [f["check"] for f in resp.json()["files"][0]["findings"]] == ["parse_failure"]
+    intake = client.post("/harden/intake", json={"code": CODE, "language": "python"}, headers=AUTH)
+    assert intake.status_code == 200 and intake.json()["public_symbols"] == []
+
+
 def test_service_errors_use_one_envelope(client):
     _err(client.post("/v1/verify", json={"before": "x"}, headers=AUTH), 422, "missing_field")
     _err(client.post("/v1/verify", json={"after": "x", "claimed_threats": ["zzz"]},

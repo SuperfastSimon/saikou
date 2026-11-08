@@ -137,6 +137,39 @@ def test_diff_bad_ref_is_usage_error(repo):
     assert main(["diff", "--base", "does-not-exist"]) == EXIT_ERROR
 
 
+# ---- code that nests too deeply to parse or analyse (finding 8) ------------------------------
+
+DEEP = "x = " + "+".join(["1"] * 20_000) + "\n"
+
+
+@needs_git
+def test_diff_blocks_code_too_deep_to_analyse_and_says_why(repo, capsys, engine_ast_raises):
+    # It used to escape as a RecursionError: fail closed, but with a traceback instead of a report.
+    (repo / "app.py").write_text("x = 1\n")
+    engine_ast_raises("parse", RecursionError)
+    assert main(["diff", "--base", "HEAD"]) == EXIT_BLOCKED
+    out = capsys.readouterr().out
+    assert "parse_failure" in out and "nests too deeply" in out
+
+
+@needs_git
+def test_diff_blocks_a_real_deep_expression(repo, capsys):
+    import ast
+
+    try:
+        ast.parse(DEEP)
+        pytest.skip("this interpreter parses the expression")
+    except RecursionError:
+        pass
+    (repo / "deep.py").write_text(DEEP)
+    _git(repo, "add", "deep.py")
+    assert main(["diff", "--base", "HEAD"]) == EXIT_BLOCKED
+    out = capsys.readouterr().out
+    assert "parse_failure" in out and "nests too deeply" in out
+    assert main(["verify", str(repo / "app.py"), str(repo / "deep.py")]) == EXIT_BLOCKED
+    assert "nests too deeply" in capsys.readouterr().out
+
+
 # ---- a file the gate cannot read must not pass it --------------------------------------------
 
 EVASION_JS = ("// eslint-disable-next-line security/detect-eval-with-expression\n"
