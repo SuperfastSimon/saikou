@@ -584,6 +584,14 @@ def freeze_step(work: Path, label: str):
     print("froze", len(ids), "variants ->", GOLDEN)
 
 
+def drift_versions(ref: dict, tools: dict) -> list:
+    """The frozen and the current tool versions, one line each, as plain version numbers."""
+    def line(label, source):
+        return label + " | ".join(f"{name} {po.shown_version(source.get(name, ''))}"
+                                  for name in ("eslint", "tsc", "semgrep"))
+    return [line("frozen: ", ref), line("now:    ", tools)]
+
+
 def drift_step(work: Path) -> int:
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
     if manifest_digest(work) != golden["digest"]:
@@ -591,8 +599,8 @@ def drift_step(work: Path) -> int:
         return 1
     tools = json.loads((work / "tools.json").read_text(encoding="utf-8"))
     ref = golden["reference_tools"]
-    print("frozen:", ref["eslint"], "|", ref["tsc"], "| semgrep", ref["semgrep"])
-    print("now:   ", tools["eslint"], "|", tools["tsc"], "| semgrep", tools["semgrep"])
+    for line in drift_versions(ref, tools):
+        print(line)
     changed = []
     for vid, frozen in sorted(golden["variants"].items()):
         for tool in TOOLS:

@@ -93,6 +93,47 @@ def test_a_marker_a_reference_tool_honours_is_never_silently_dropped(golden, ver
     assert silent == []
 
 
+BANDIT_VERSION_TEXT = ("bandit 1.9.4\n  python version = 3.11.17 (main, Oct  7 2026, 10:00:00) "
+                       "[GCC 13.3.0]")
+
+
+@pytest.mark.parametrize("raw, plain", [
+    (BANDIT_VERSION_TEXT, "1.9.4"),
+    (BANDIT_VERSION_TEXT.replace("\n", " "), "1.9.4"),          # as bandit_version() stores it
+    ("__main__.py 1.7.5\n  python version = 3.9.2", "1.7.5"),
+    ("flake8-7.4.1-py2.py3-none-any.whl", "7.4.1"),
+    ("ruff 0.17.1", "0.17.1"),
+    ("1.182.1", "1.182.1"),
+    ("v9.39.5", "9.39.5"),
+    ("Version 5.9.3", "5.9.3"),
+    ("1.10.0rc1", "1.10.0rc1"),
+    ("constants.py (develop), pattern only", ""),
+    ("", ""),
+])
+def test_tool_versions_are_read_as_plain_version_numbers(oracle, raw, plain):
+    assert oracle.plain_version(raw) == plain
+
+
+def test_drift_prints_plain_versions(oracle, golden, pairs, capsys):
+    """Review finding 1: the "now:" line showed bandit's whole --version text and the flake8
+    wheel file name."""
+    executed = golden["reference_tools"]["executed"]
+    tools = {"bandit": BANDIT_VERSION_TEXT.replace("\n", " "),
+             "flake8_wheel": "flake8-7.4.1-py2.py3-none-any.whl", "ruff": "ruff 0.17.2",
+             "semgrep": "1.182.1", "executed": executed,
+             "variants": {vid: {"tools": {t: {"honoured": oracle.TOOL_LETTER[t] in v["h"]}
+                                          for t in oracle.TOOLS}}
+                          for vid, v in golden["variants"].items()}}
+    (pairs / "tools.json").write_text(json.dumps(tools), encoding="utf-8")
+    assert oracle.drift_step(pairs) == 0
+    frozen, now = capsys.readouterr().out.splitlines()[:2]
+    assert now == "now:    bandit 1.9.4 | flake8 7.4.1 | ruff 0.17.2 | semgrep 1.182.1"
+    ref = golden["reference_tools"]
+    assert frozen.startswith(f"frozen: bandit {oracle.plain_version(ref['bandit'])} | flake8 ")
+    for line in (frozen, now):
+        assert "python version" not in line and ".whl" not in line and "ruff ruff" not in line
+
+
 @pytest.mark.parametrize("lang", ["en", "nl"])
 def test_the_coverage_statement_is_generated_from_the_golden_file(oracle, golden, lang):
     committed = oracle.COVERAGE_DOCS[lang].read_text(encoding="utf-8").replace("\r\n", "\n")

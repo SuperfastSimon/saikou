@@ -82,3 +82,10 @@ def test_a_marker_an_executed_tool_honours_is_never_dropped(golden, verdicts):
               for vid, (kind, _) in verdicts.items()
               if golden["variants"][vid]["h"] and kind not in ("caught", "style-warned")]
     assert silent == [], silent[:10]
+
+
+def test_drift_prints_plain_versions(oracle):
+    lines = oracle.drift_versions({"eslint": "v9.39.5", "tsc": "5.9.3", "semgrep": "1.181.0"},
+                                  {"eslint": "v9.40.0\n", "tsc": "Version 5.9.3", "semgrep": ""})
+    assert lines == ["frozen: eslint 9.39.5 | tsc 5.9.3 | semgrep 1.181.0",
+                     "now:    eslint 9.40.0 | tsc 5.9.3 | semgrep not run"]

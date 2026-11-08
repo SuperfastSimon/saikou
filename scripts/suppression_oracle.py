@@ -56,7 +56,7 @@ import tokenize
 import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -530,6 +530,17 @@ def bandit_suppressed(state, test_id):
     ign = sorted(l for t, l in state["lines_ign"] if t == test_id)
     reg = {l for t, l in state["lines_reg"] if t == test_id}
     return {i for i, l in enumerate(ign) if l not in reg}, len(ign)
+
+
+_VERSION = re.compile(r"(?<![\w.])v?(\d+(?:\.\d+)+(?:[-+.]?(?:a|b|rc|dev|post)\d*)?)(?![\w])")
+
+
+def plain_version(text: str) -> str:
+    """The first version number in what a tool reports about itself: "1.9.4" from bandit's
+    whole --version text (which also names the Python version), "7.4.1" from a flake8 wheel
+    file name, "0.17.1" from "ruff 0.17.1", "9.39.5" from "v9.39.5". Empty when there is none."""
+    m = _VERSION.search(text or "")
+    return m.group(1) if m else ""
 
 
 def tool_version(exe, *args):
@@ -1409,6 +1420,22 @@ def render_coverage(golden: dict, golden_js: Optional[dict] = None) -> dict:
     return {lang: parts[lang].rstrip("\n") + "\n" + extra[lang] for lang in parts}
 
 
+def shown_version(raw: str) -> str:
+    """A tool version for the drift report: the plain number, else the stored text (for a tool
+    that was only read as a pattern, or not run)."""
+    return plain_version(raw) or (" ".join((raw or "").split())[:60] or "not run")
+
+
+def drift_versions(ref: dict, tools: dict) -> List[str]:
+    """The frozen and the current tool versions, one line each, as plain version numbers."""
+    def line(label, values):
+        return label + " | ".join(f"{name} {shown_version(value)}" for name, value in values)
+    return [line("frozen: ", [("bandit", ref.get("bandit", "")), ("flake8", ref.get("flake8", "")),
+                              ("ruff", ref.get("ruff", "")), ("semgrep", ref.get("semgrep", ""))]),
+            line("now:    ", [("bandit", tools.get("bandit", "")), ("flake8", tools.get("flake8_wheel", "")),
+                              ("ruff", tools.get("ruff", "")), ("semgrep", tools.get("semgrep", ""))])]
+
+
 def drift_step(work: Path) -> int:
     """Compare what the executed reference tools say now with the frozen answers. A changed
     answer means a new bandit or flake8 reads a marker differently: look at it, then refresh
@@ -1419,10 +1446,8 @@ def drift_step(work: Path) -> int:
         return 1
     tools = json.loads((work / "tools.json").read_text(encoding="utf-8"))
     ref = golden["reference_tools"]
-    print("frozen: bandit", ref["bandit"], "| flake8", ref["flake8"], "|", ref.get("ruff", ""),
-          "| semgrep", ref.get("semgrep", ""))
-    print("now:    ", tools["bandit"].split("\n")[0], "|", tools["flake8_wheel"], "|",
-          tools.get("ruff", ""), "| semgrep", tools.get("semgrep", ""))
+    for line in drift_versions(ref, tools):
+        print(line)
     frozen_run = set(ref.get("executed", ["bandit"])) | {"flake8"}
     run_now = set(tools.get("executed", ["bandit"])) | {"flake8"}
     compared = [t for t in ("bandit", "flake8", "ruff", "semgrep") if t in frozen_run and t in run_now]
