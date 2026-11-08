@@ -38,6 +38,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read   # required for a SARIF upload from a private repository
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,6 +46,7 @@ jobs:
       - uses: ./
         with:
           paths: "saikou scripts action.yml"
-          # Code scanning only takes uploads on public repositories (or with GitHub
-          # Advanced Security); while this one is private the job summary carries the findings.
+          # Code scanning takes uploads on public repositories, and on private ones only with
+          # GitHub Code Security or GitHub Advanced Security; while this one is private the job
+          # summary carries the findings.
           upload-sarif: ${{ !github.event.repository.private }}

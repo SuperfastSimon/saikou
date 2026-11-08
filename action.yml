@@ -39,7 +39,7 @@ inputs:
     required: false
     default: "false"
   upload-sarif:
-    description: "Upload findings to GitHub code scanning (needs permissions: security-events: write, and code scanning on the repository: every public one, private ones only with GitHub Advanced Security). Set to false otherwise; the job summary still lists every finding."
+    description: "Upload findings to GitHub code scanning. Needs code scanning on the repository (every public one; a private one only with GitHub Code Security or GitHub Advanced Security) and permissions security-events: write, plus actions: read in a private repository. Set to false otherwise; the job summary still lists every finding."
     required: false
     default: "true"
   fail-on-findings:

@@ -92,6 +92,22 @@ def test_pythonpath_is_unset_before_anything_runs():
             assert first == "unset PYTHONPATH", (sid, first)
 
 
+def test_sarif_upload_requirements_are_stated_in_full():
+    """GitHub: a private repository needs GitHub Code Security or GitHub Advanced Security, and
+    `actions: read` ("only required for workflows in private repositories")."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    example = re.search(r"```yaml\nname: saikou\n(.*?)```", readme, re.S).group(1)
+    permissions = re.search(r"^permissions:\n((?:  .*\n)+)", example, re.M).group(1)
+    assert re.search(r"^  actions: read\b", permissions, re.M)
+    assert re.search(r"^  security-events: write\b", permissions, re.M)
+    action = ACTION.read_text(encoding="utf-8")
+    for text in (readme, action):
+        assert "GitHub Code Security or GitHub Advanced Security" in " ".join(text.split())
+    assert "actions: read" in action
+    dogfood = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8").split("dogfood:")[1]
+    assert re.search(r"^      actions: read\b", dogfood, re.M)
+
+
 def _plant(folder: Path) -> Path:
     """A workspace that holds its own saikou, pip and bandit packages and a sitecustomize."""
     marker = folder / "PLANTED-CODE-RAN"

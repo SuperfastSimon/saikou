@@ -97,7 +97,8 @@ name: saikou
 on: pull_request
 permissions:
   contents: read
-  security-events: write
+  security-events: write   # upload to code scanning
+  actions: read            # needed in private repositories only
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -110,8 +111,10 @@ jobs:
           only-agent-prs: "false"   # "true" = only check PRs opened by bots / AI agents
 ```
 
-Code scanning takes the upload on public repositories; a private one needs GitHub Advanced Security.
-Without it, set `upload-sarif: "false"`: the job summary still lists every finding.
+Code scanning takes the upload on every public repository. A private one needs GitHub Code
+Security or GitHub Advanced Security, and its workflow needs `actions: read` as well as
+`security-events: write`. Without code scanning, set `upload-sarif: "false"`: the job
+summary still lists every finding.
 A changed file the gate cannot read blocks (`content_not_checked`); leave one that is meant
 to be like this (a vendored bundle over 1 MB, say) out with `paths: ". :(exclude)vendor/bundle.js"`.
 `warn-only` turns the listed checks into warnings for every file, which also lets an
