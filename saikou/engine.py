@@ -696,9 +696,9 @@ def _qualified_name(func: ast.expr, aliases: Dict[str, str]) -> str:
 def _is_security_call(node: ast.Call, aliases: Dict[str, str]) -> bool:
     if _qualified_name(node.func, aliases) in _SECURITY_CALLS:
         return True
-    return (_is_true(_kw(node, "shell")) or _is_falsey(_kw(node, "verify"))
-            or _is_falsey(_kw(node, "autoescape"))
-            or (_call_name(node) == "run" and _is_true(_kw(node, "debug"))))
+    return (_literal_true(_kw(node, "shell")) or _literal_falsey(_kw(node, "verify"))
+            or _literal_falsey(_kw(node, "autoescape"))
+            or (_call_name(node) == "run" and _literal_true(_kw(node, "debug"))))
 
 
 def _simple_statements(tree: ast.AST) -> List[Tuple[Tuple[str, ...], ast.stmt]]:
@@ -1466,30 +1466,179 @@ _PATHISH = re.compile(
     r"^(?:basename|realpath|abspath|normpath|resolve|secure_filename|quote|quote_plus|fspath)$")
 
 
-def _call_name(node: ast.Call) -> str:
-    f = node.func
-    if isinstance(f, ast.Name):
-        return f.id
-    if isinstance(f, ast.Attribute):
-        return f.attr
+def _func_name(func: ast.expr) -> str:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
     return ""
 
 
-def _kw(node: ast.Call, name: str) -> Optional[ast.expr]:
-    for k in node.keywords:
-        if k.arg == name:
-            return k.value
+def _call_name(node: ast.Call) -> str:
+    return _func_name(node.func)
+
+
+# ---- values and names fixed by the file itself (sink checks) -----------------------------
+# Matching only the literal form let `shell=1`, `shell=not False`, `USE_SHELL = True` ...
+# `shell=USE_SHELL`, `**{'shell': True}`, `verify=bool(0)`, `_e = eval; _e(x)`,
+# `cur.execute(sql, ())` and `run = cur.execute; run(f"...")` through (review finding 20).
+# A name is followed only when it is bound exactly once in the whole file, by `name = value`;
+# a parameter, a loop or `with` target, an import, a call result or a name bound twice stays
+# unknown and is never flagged. A list, dict or set can change after it is bound
+# (`params.append(x)`, `kwargs['shell'] = False`), so one is followed only when its name is
+# read nowhere but as `**name`.
+_FOLD_DEPTH = 12
+_MUTABLE_DISPLAYS = (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)
+
+
+@dataclass(frozen=True)
+class _Names:
+    single: Dict[str, ast.expr]     # name -> its value, for names bound once by `name = value`
+    bound: Counter                  # how often each name is bound anywhere in the file
+
+    def builtin(self, name: str) -> bool:
+        """`name` still means the builtin: the file never binds it."""
+        return not self.bound.get(name)
+
+
+def _is_mutable(value: ast.expr) -> bool:
+    return isinstance(value, _MUTABLE_DISPLAYS) or (
+        isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+        and value.func.id in ("dict", "list", "set"))
+
+
+def _file_names(tree: ast.AST) -> _Names:
+    bound: Counter = Counter()
+    loads: Counter = Counter()
+    unpacked: Counter = Counter()   # reads as `f(**name)`
+    value: Dict[str, ast.expr] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            (loads if isinstance(node.ctx, ast.Load) else bound)[node.id] += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound[node.name] += 1
+        elif isinstance(node, ast.arg):
+            bound[node.arg] += 1
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound[(alias.asname or alias.name).split(".")[0]] += 1
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound[node.name] += 1
+        elif isinstance(node, ast.keyword) and node.arg is None \
+                and isinstance(node.value, ast.Name):
+            unpacked[node.value.id] += 1
+        elif type(node).__name__ in ("MatchAs", "MatchStar", "MatchMapping"):
+            captured = getattr(node, "name", None) or getattr(node, "rest", None)
+            if captured:
+                bound[captured] += 1
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            value[node.targets[0].id] = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                and node.value is not None:
+            value[node.target.id] = node.value
+    single = {n: v for n, v in value.items()
+              if bound[n] == 1 and (not _is_mutable(v) or loads[n] == unpacked[n])}
+    return _Names(single, bound)
+
+
+def _single(expr: Optional[ast.expr], names: Optional[_Names]) -> Optional[ast.expr]:
+    """The value of a name bound once in the file, else None."""
+    if isinstance(expr, ast.Name) and names is not None:
+        return names.single.get(expr.id)
     return None
 
 
-def _is_db_call(node: ast.Call) -> bool:
+def _resolve(expr: ast.expr, names: Optional[_Names]) -> ast.expr:
+    """`expr`, or the value at the end of a chain of names each bound once."""
+    for _ in range(_FOLD_DEPTH):
+        value = _single(expr, names)
+        if value is None:
+            break
+        expr = value
+    return expr
+
+
+def _truth(node: Optional[ast.expr], names: Optional[_Names] = None,
+           depth: int = 0) -> Optional[bool]:
+    """Truth value of `node` when the code itself fixes it: a constant, a literal container,
+    `not`, `and`/`or`, `bool(...)`, or a name bound once to one of these. None when unknown."""
+    if node is None or depth > _FOLD_DEPTH:
+        return None
+    if isinstance(node, ast.Constant):
+        return bool(node.value)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        if any(not isinstance(e, ast.Starred) for e in node.elts):
+            return True
+        return False if not node.elts else None
+    if isinstance(node, ast.Dict):
+        if any(k is not None for k in node.keys):
+            return True
+        return False if not node.keys else None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        inner = _truth(node.operand, names, depth + 1)
+        return None if inner is None else not inner
+    if isinstance(node, ast.BoolOp):
+        # `or` is true when any operand is, `and` is false when any operand is.
+        parts = [_truth(v, names, depth + 1) for v in node.values]
+        decisive = isinstance(node.op, ast.Or)
+        if decisive in parts:
+            return decisive
+        return None if None in parts else not decisive
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "bool"
+            and not node.keywords and len(node.args) <= 1
+            and names is not None and names.builtin("bool")):
+        return _truth(node.args[0], names, depth + 1) if node.args else False
+    value = _single(node, names)
+    return None if value is None else _truth(value, names, depth + 1)
+
+
+def _kw_value(node: ast.Call, name: str, names: Optional[_Names]) -> Optional[ast.expr]:
+    """The value passed for keyword `name`: written out, or from `**{...}` / `**dict(...)`
+    (directly or through a name bound once). None when absent or unknown."""
+    for k in node.keywords:
+        if k.arg == name:
+            return k.value
+    for k in node.keywords:
+        if k.arg is not None:
+            continue
+        mapping = _resolve(k.value, names)
+        found: Optional[ast.expr] = None
+        if isinstance(mapping, ast.Dict):
+            for key, value in zip(mapping.keys, mapping.values):
+                if key is None:
+                    found = None    # `{..., **other}`: other may set it
+                elif isinstance(key, ast.Constant) and key.value == name:
+                    found = value
+        elif (isinstance(mapping, ast.Call) and isinstance(mapping.func, ast.Name)
+              and mapping.func.id == "dict" and not mapping.args
+              and names is not None and names.builtin("dict")):
+            found = next((kw.value for kw in mapping.keywords if kw.arg == name), None)
+        if found is not None:
+            return found
+    return None
+
+
+def _call_target(node: ast.Call, names: Optional[_Names]) -> ast.expr:
+    """The called expression, through names bound once to a name or attribute:
+    `_e = eval; _e(x)` calls eval, `run = cur.execute; run(q)` calls cur.execute."""
+    func = node.func
+    for _ in range(_FOLD_DEPTH):
+        value = _single(func, names)
+        if not isinstance(value, (ast.Name, ast.Attribute)):
+            break
+        func = value
+    return func
+
+
+def _is_db_call(func: ast.expr) -> bool:
     """True when an `execute()` receiver looks like a database cursor/connection.
 
     `execute` is a generic method name - command objects, executors and task
     runners all use it. Requiring a DB-ish receiver removed 2/2 measured false
     positives (`return self.execute(m)` in pydantic's decorator module).
     """
-    recv = getattr(node.func, "value", None)
+    recv = getattr(func, "value", None)
     if isinstance(recv, ast.Name):
         base = recv.id
     elif isinstance(recv, ast.Attribute):
@@ -1501,11 +1650,39 @@ def _is_db_call(node: ast.Call) -> bool:
     return bool(_identifier_words(base) & _DB_RECEIVERS)
 
 
-def _is_true(node: Optional[ast.expr]) -> bool:
+def _no_sql_params(node: ast.Call, names: Optional[_Names] = None) -> bool:
+    """No parameter argument, or an empty one: `()`, `[]`, `{}`, None."""
+    return len(node.args) < 2 or _truth(node.args[1], names) is False
+
+
+def _computed_query(expr: ast.expr, names: Optional[_Names] = None) -> bool:
+    """Not a string literal, nor a name bound once to one."""
+    return not isinstance(_resolve(expr, names), ast.Constant)
+
+
+def _is_true(node: Optional[ast.expr], names: Optional[_Names]) -> bool:
+    return _truth(node, names) is True
+
+
+def _is_falsey(node: Optional[ast.expr], names: Optional[_Names]) -> bool:
+    return _truth(node, names) is False
+
+
+# The literal forms only, for `_is_security_call`: which lines an analyser reports, so where
+# a bare flake8 marker hides a report. Kept literal on purpose; widening that needs
+# scripts/suppression_oracle.py with the real bandit, ruff and semgrep.
+def _kw(node: ast.Call, name: str) -> Optional[ast.expr]:
+    for k in node.keywords:
+        if k.arg == name:
+            return k.value
+    return None
+
+
+def _literal_true(node: Optional[ast.expr]) -> bool:
     return isinstance(node, ast.Constant) and node.value is True
 
 
-def _is_falsey(node: Optional[ast.expr]) -> bool:
+def _literal_falsey(node: Optional[ast.expr]) -> bool:
     return isinstance(node, ast.Constant) and node.value in (False, 0, None)
 
 
@@ -1523,31 +1700,41 @@ def danger_sinks(code: str) -> List[Finding]:
         out.append(Finding(check, Severity.HARD_FAIL, detail,
                            getattr(node, "lineno", None)))
 
+    names = _file_names(tree)
     for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            # `session.verify = False` turns TLS checking off just like the keyword does.
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Attribute) and t.attr == "verify" for t in targets) \
+                    and _is_falsey(node.value, names):
+                flag(node, "sink_tls_verify_off",
+                     "TLS certificate verification is disabled in the output.")
+            continue
         if not isinstance(node, ast.Call):
             continue
-        name = _call_name(node)
+        func = _call_target(node, names)
+        name = _func_name(func)
 
-        if _is_true(_kw(node, "shell")):
+        if _is_true(_kw_value(node, "shell", names), names):
             flag(node, "sink_shell_true",
                  "shell=True survives in the output; command injection sink intact.")
-        if _is_falsey(_kw(node, "verify")):
+        if _is_falsey(_kw_value(node, "verify", names), names):
             flag(node, "sink_tls_verify_off",
                  "TLS certificate verification is disabled in the output.")
-        if name == "run" and _is_true(_kw(node, "debug")):
+        if name == "run" and _is_true(_kw_value(node, "debug", names), names):
             flag(node, "sink_debug_true", "debug=True survives in the output.")
 
         if name in ("eval", "exec") and node.args and not isinstance(node.args[0], ast.Constant):
             flag(node, "sink_dynamic_exec",
                  f"{name}() on a non-literal survives in the output.")
 
-        if name in ("execute", "executemany") and node.args and _is_db_call(node):
+        if name in ("execute", "executemany") and node.args and _is_db_call(func):
             # Most specific first: an f-string or `%`/`+` concatenation is
             # interpolation regardless of whether params were also passed.
             if isinstance(node.args[0], (ast.JoinedStr, ast.BinOp)):
                 flag(node, "sink_sql_interpolated",
                      "execute() receives an interpolated string; parameterise instead.")
-            elif not isinstance(node.args[0], ast.Constant) and len(node.args) < 2:
+            elif _computed_query(node.args[0], names) and _no_sql_params(node, names):
                 flag(node, "sink_sql_nonparameterised",
                      "execute() receives a computed string with no parameter argument; "
                      "the SQL injection sink is intact.")
@@ -1686,6 +1873,7 @@ def _forwarding_wrappers(tree: ast.Module) -> Dict[str, Set[int]]:
     positional-arg indices}}.
     """
     wrappers: Dict[str, Set[int]] = {}
+    names = _file_names(tree)
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -1695,19 +1883,19 @@ def _forwarding_wrappers(tree: ast.Module) -> Dict[str, Set[int]]:
         for node in ast.walk(fn):
             if not isinstance(node, ast.Call):
                 continue
-            name = _call_name(node)
+            name = _func_name(_call_target(node, names))
             args = node.args
 
             def param_index(expr: ast.expr) -> Optional[int]:
                 return index.get(expr.id) if isinstance(expr, ast.Name) else None
 
-            # raw SQL sink: execute(param) with no params argument
-            if name in ("execute", "executemany") and len(args) < 2 and args:
+            # raw SQL sink: execute(param) with no (or an empty) params argument
+            if name in ("execute", "executemany") and args and _no_sql_params(node, names):
                 i = param_index(args[0])
                 if i is not None:
                     tainted.add(i)
             # shell / os.system / eval / exec forwarding a parameter
-            if _is_true(_kw(node, "shell")) and args:
+            if _is_true(_kw_value(node, "shell", names), names) and args:
                 i = param_index(args[0])
                 if i is not None:
                     tainted.add(i)

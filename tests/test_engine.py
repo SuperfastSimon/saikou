@@ -656,6 +656,141 @@ def test_gating_a_new_empty_file_is_not_blocked():
     assert "empty_output" in [f.check for f in strict]
 
 
+# ---- sinks written differently from the literal form (finding 20) ------------------------
+
+SHELL_TRUE = "import subprocess\n\ndef run(cmd):\n    return subprocess.call(cmd, shell=True)\n"
+VERIFY_OFF = "import requests\n\ndef get(url):\n    return requests.get(url, verify=False)\n"
+EVAL = "def calc(e):\n    return eval(e)\n"
+SQL_F = "def find(cur, uid):\n    cur.execute(f\"SELECT * FROM u WHERE id = {uid}\")\n"
+DEBUG_TRUE = "from app import app\n\napp.run(debug=True)\n"
+_DEF_RUN = "import subprocess\n\n"
+_SQL = "    sql = f\"SELECT * FROM u WHERE id = {uid}\"\n"
+
+REWRITES = [
+    # (label, the sink as it was, the same sink rewritten, the check that must still fire)
+    ("shell=1", SHELL_TRUE, SHELL_TRUE.replace("shell=True", "shell=1"), "sink_shell_true"),
+    ("shell=bool(1)", SHELL_TRUE, SHELL_TRUE.replace("shell=True", "shell=bool(1)"),
+     "sink_shell_true"),
+    ("shell=not False", SHELL_TRUE, SHELL_TRUE.replace("shell=True", "shell=not False"),
+     "sink_shell_true"),
+    ("module constant", SHELL_TRUE,
+     _DEF_RUN + "USE_SHELL = True\n\ndef run(cmd):\n    return subprocess.call(cmd, shell=USE_SHELL)\n",
+     "sink_shell_true"),
+    ("**{'shell': True}", SHELL_TRUE, SHELL_TRUE.replace("shell=True", "**{'shell': True}"),
+     "sink_shell_true"),
+    ("**dict(shell=True)", SHELL_TRUE, SHELL_TRUE.replace("shell=True", "**dict(shell=True)"),
+     "sink_shell_true"),
+    ("**OPTS", SHELL_TRUE,
+     _DEF_RUN + "OPTS = {'shell': True}\n\ndef run(cmd):\n    return subprocess.call(cmd, **OPTS)\n",
+     "sink_shell_true"),
+    ("shell=False or 1", SHELL_TRUE, SHELL_TRUE.replace("shell=True", "shell=False or 1"),
+     "sink_shell_true"),
+    ("**{**base, 'shell': True}", SHELL_TRUE,
+     SHELL_TRUE.replace("shell=True", "**{**base, 'shell': True}").replace("(cmd)", "(cmd, base)"),
+     "sink_shell_true"),
+    ("verify=bool(0)", VERIFY_OFF, VERIFY_OFF.replace("verify=False", "verify=bool(0)"),
+     "sink_tls_verify_off"),
+    ("session.verify = False", VERIFY_OFF,
+     "import requests\n\ndef get(url):\n    s = requests.Session()\n    s.verify = False\n"
+     "    return s.get(url)\n", "sink_tls_verify_off"),
+    ("_e = eval", EVAL, "_e = eval\n\ndef calc(e):\n    return _e(e)\n", "sink_dynamic_exec"),
+    ("alias of an alias", EVAL, "_e = eval\n_f = _e\n\ndef calc(e):\n    return _f(e)\n",
+     "sink_dynamic_exec"),
+    ("execute(sql, ())", SQL_F, "def find(cur, uid):\n" + _SQL + "    cur.execute(sql, ())\n",
+     "sink_sql_nonparameterised"),
+    ("execute(sql, None)", SQL_F, "def find(cur, uid):\n" + _SQL + "    cur.execute(sql, None)\n",
+     "sink_sql_nonparameterised"),
+    ("run = cur.execute", SQL_F,
+     "def find(cur, uid):\n    run = cur.execute\n    run(f\"SELECT * FROM u WHERE id = {uid}\")\n",
+     "sink_sql_interpolated"),
+    ("debug=DEBUG", DEBUG_TRUE, "from app import app\n\nDEBUG = True\napp.run(debug=DEBUG)\n",
+     "sink_debug_true"),
+    ("**dict(debug=True)", DEBUG_TRUE, DEBUG_TRUE.replace("debug=True", "**dict(debug=True)"),
+     "sink_debug_true"),
+]
+_THREAT = {"sink_shell_true": "injection", "sink_tls_verify_off": "ssrf",
+           "sink_debug_true": "untrusted_input",
+           "sink_dynamic_exec": "injection", "sink_sql_nonparameterised": "injection",
+           "sink_sql_interpolated": "injection"}
+
+
+def _hard_checks(findings):
+    return [f.check for f in findings if f.severity is Severity.HARD_FAIL]
+
+
+@pytest.mark.parametrize("label, before, after, check", REWRITES, ids=[r[0] for r in REWRITES])
+def test_a_rewritten_sink_still_counts(label, before, after, check):
+    # Each of these came back `ok` from a claimed fix: the check only knew the literal form.
+    claimed = scan_transformation(before, after, language="python",
+                                  claimed_threats=[_THREAT[check]])
+    assert check in _hard_checks(claimed)
+    # And written into a file that did not have it, the change gate blocks it as new.
+    gated = scan_transformation("x = 1\n", after, language="python", expect_change=False)
+    assert check in _hard_checks(gated)
+
+
+@pytest.mark.parametrize("code", [
+    _DEF_RUN + "def run(cmd, use_shell):\n    return subprocess.call(cmd, shell=use_shell)\n",
+    _DEF_RUN + "SHELL = True\nSHELL = False\n\ndef run(cmd):\n    return subprocess.call(cmd, shell=SHELL)\n",
+    _DEF_RUN + "def run(cmd):\n    return subprocess.call(cmd, shell=bool(0))\n",
+    _DEF_RUN + "def run(cmd):\n    return subprocess.call(cmd, shell=not True)\n",
+    _DEF_RUN + "def run(cmd):\n    return subprocess.call(cmd, shell=0)\n",
+    _DEF_RUN + "def run(cmd, **opts):\n    return subprocess.call(cmd, **opts)\n",
+    _DEF_RUN + "def run(cmd):\n    return subprocess.call(cmd, **{'shell': False})\n",
+    _DEF_RUN + "def bool(x):\n    return False\n\ndef run(c):\n    return subprocess.call(c, shell=bool(1))\n",
+    "import requests\n\ndef get(url, ca):\n    return requests.get(url, verify=ca)\n",
+    "import requests\n\ndef get(url):\n    return requests.get(url, verify='/etc/ca.pem')\n",
+    "import requests\n\ndef get(url, ca):\n    s = requests.Session()\n    s.verify = ca\n"
+    "    s.verify = True\n    return s.get(url)\n",
+    "_e = str\n\ndef calc(e):\n    return _e(e)\n",
+    "_e = eval\n_e = str\n\ndef calc(e):\n    return _e(e)\n",
+    "def find(cur, uid):\n    cur.execute(\"SELECT * FROM u WHERE id = ?\", (uid,))\n",
+    "def find(cur, sql, params):\n    cur.execute(sql, params)\n",
+    "QUERY = \"SELECT * FROM u\"\n\ndef every(cur):\n    cur.execute(QUERY)\n",
+    "QUERY = \"SELECT * FROM u\"\n\ndef every(cur):\n    cur.execute(QUERY, ())\n",
+    "class C:\n    def go(self, m):\n        run = self.execute\n        return run(f\"{m}\")\n",
+    # A list, dict or set can change after it is bound: not followed unless only `**`-read.
+    "def search(cur, name=None):\n    clauses = []\n    params = []\n    if name:\n"
+    "        clauses.append('name = ?')\n        params.append(name)\n"
+    "    sql = 'SELECT * FROM t'\n    if clauses:\n"
+    "        sql += ' WHERE ' + ' AND '.join(clauses)\n    cur.execute(sql, params)\n",
+    _DEF_RUN + "import sys\nKW = {'shell': True}\nif sys.platform != 'win32':\n"
+    "    KW['shell'] = False\n\ndef run(cmd):\n    return subprocess.call(cmd, **KW)\n",
+    _DEF_RUN + "KW = {'shell': True}\nKW.update(shell=False)\n\n"
+    "def run(cmd):\n    return subprocess.call(cmd, **KW)\n",
+    _DEF_RUN + "def run(cmd, extra):\n    return subprocess.call(cmd, **{'shell': True, **extra})\n",
+    # (`dict(debug=True)` is not itself a `run` call, so only the outer call could count)
+    "from app import app\n\ndef dict(**k):\n    return {}\n\napp.run(**dict(debug=True))\n",
+    _DEF_RUN + "def run(cmd, flag):\n    return subprocess.call(cmd, shell=flag or False)\n",
+    _DEF_RUN + "def run(cmd, flag):\n    return subprocess.call(cmd, shell=flag and True)\n",
+])
+def test_values_and_names_that_are_not_fixed_stay_unflagged(code):
+    assert _hard_checks(scan_transformation("x = 1\n", code, language="python",
+                                            expect_change=False)) == []
+
+
+def test_a_wrapper_hiding_an_aliased_or_empty_parameter_execute_is_a_shared_sink():
+    for body in ("    run = cur.execute\n    run(sql)\n", "    cur.execute(sql, ())\n"):
+        code = (f"def q(cur, sql):\n{body}\n\ndef find(cur, uid):\n"
+                "    q(cur, f\"SELECT * FROM u WHERE id = {uid}\")\n")
+        assert "shared_sink_injection_path" in _hard_checks(
+            scan_transformation("x = 1\n", code, language="python", expect_change=False))
+
+
+def test_where_a_bare_flake8_marker_hides_a_report_is_still_the_literal_form():
+    # Which lines an analyser reports is decided against the real tools
+    # (scripts/suppression_oracle.py); the sink checks reading `shell=1` as true does not
+    # change it. A bare marker on a call that is not on the subprocess list stays a style
+    # marker unless the call says shell=True literally.
+    marker = "  # " + "noqa"
+    for value, blocks in (("True", True), ("1", False), ("not False", False)):
+        before = f"from tools import invoke\ninvoke(c, shell={value})\n"
+        after = before.replace(")\n", ")" + marker + "\n")
+        hard = _hard_checks(scan_transformation(before, after, language="python",
+                                                expect_change=False))
+        assert ("suppression_introduced" in hard) is blocks, value
+
+
 # ---- language of a script without an extension, from its #! line ------------------------
 
 @pytest.mark.parametrize("first_line, language", [
