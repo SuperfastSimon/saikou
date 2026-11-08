@@ -1,0 +1,22 @@
+# Never send secrets or local state to the Docker daemon.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+.venv/
+venv/
+internal/
+build/
+dist/
+.git/
+.github/
+.pytest_cache/
+**/__pycache__/
+*.py[cod]
+site/
+docs/
+tests/
+plugins/
+.claude/
+.claude-plugin/

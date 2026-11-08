@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: windows-latest
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Engine imports with zero dependencies
+        run: python -c "import sys; sys.path.insert(0, '.'); import saikou; print(saikou.__version__)"
+      - run: python -m pip install -e ".[dev]"
+      - run: saikou selftest
+      - run: python -m pytest -q
+
+  dogfood:
+    # Saikou checks its own pull requests. tests/ is excluded because its
+    # fixtures are deliberate fake fixes.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./
+        with:
+          paths: "saikou scripts action.yml"
+          # Code scanning only takes uploads on public repositories (or with GitHub
+          # Advanced Security); while this one is private the job summary carries the findings.
+          upload-sarif: ${{ !github.event.repository.private }}

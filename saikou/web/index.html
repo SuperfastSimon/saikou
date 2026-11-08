@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en" data-mode="local" data-theme="system">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Saikou</title>
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/app.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="skip">Skip to content</a>
+
+<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-verify" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-gate" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9c0 5-6 5-11 8"/></symbol>
+  <symbol id="i-harden" viewBox="0 0 24 24"><path d="M13 3l8 8-3 3-8-8z"/><path d="M3 21l9-9"/></symbol>
+  <symbol id="i-checks" viewBox="0 0 24 24"><path d="M4 6l1.5 1.5L8 5"/><path d="M4 12l1.5 1.5L8 11"/><path d="M4 18l1.5 1.5L8 17"/><path d="M11 6h9M11 12h9M11 18h9"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 17v-6M9.5 13.5L12 11l2.5 2.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 20h14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-block" viewBox="0 0 24 24"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M9 9l6 6M15 9l-6 6"/></symbol>
+  <symbol id="i-pass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4M12 17.5v.5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-write" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M3 5h6a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H3z"/><path d="M21 5h-6a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <span class="brand">Saikou</span>
+    <span class="badge" id="mode-badge" data-i18n="badge.local">local</span>
+    <span class="spacer"></span>
+    <div class="seg seg-dark" role="group" aria-label="Language" data-i18n-attr="aria-label:lang.group">
+      <button type="button" class="seg-btn" data-lang="en" lang="en" aria-pressed="true">EN</button>
+      <button type="button" class="seg-btn" data-lang="nl" lang="nl" aria-pressed="false">NL</button>
+    </div>
+    <button type="button" class="top-btn" id="theme-btn">
+      <svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg>
+      <span id="theme-label">System</span>
+    </button>
+  </header>
+
+  <nav class="rail" aria-label="Screens" data-i18n-attr="aria-label:rail.label">
+    <button type="button" class="rail-btn" data-screen="verify"><svg class="icon" aria-hidden="true"><use href="#i-verify"/></svg><span data-i18n="nav.verify">Verify</span><kbd aria-hidden="true">1</kbd></button>
+    <button type="button" class="rail-btn" data-screen="gate"><svg class="icon" aria-hidden="true"><use href="#i-gate"/></svg><span data-i18n="nav.gate">Gate</span><kbd aria-hidden="true">2</kbd></button>
+    <button type="button" class="rail-btn" data-screen="harden"><svg class="icon" aria-hidden="true"><use href="#i-harden"/></svg><span data-i18n="nav.harden">Harden</span><kbd aria-hidden="true">3</kbd></button>
+    <button type="button" class="rail-btn" data-screen="checks"><svg class="icon" aria-hidden="true"><use href="#i-checks"/></svg><span data-i18n="nav.checks">Checks</span><kbd aria-hidden="true">4</kbd></button>
+    <button type="button" class="rail-btn" data-screen="history"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg><span data-i18n="nav.history">History</span><kbd aria-hidden="true">5</kbd></button>
+  </nav>
+
+  <main class="main" id="main" tabindex="-1">
+    <noscript><div class="state error"><h2>JavaScript is off</h2><p>This app needs JavaScript. It loads nothing from other sites.</p></div></noscript>
+    <div class="state error" id="boot-error" hidden></div>
+
+    <!-- ===================================== VERIFY ===================================== -->
+    <section class="screen" id="screen-verify" aria-labelledby="h-verify" hidden>
+      <div class="screen-head">
+        <div>
+          <h1 id="h-verify" tabindex="-1" data-i18n="verify.title">Verify a change</h1>
+          <p data-i18n="verify.lede">Paste the code before and after a security fix. Saikou reports what it can show changed, and blocks what only looks fixed.</p>
+        </div>
+        <button type="button" class="btn" id="v-sample"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg><span data-i18n="verify.sample">Load an example</span></button>
+      </div>
+
+      <div class="token-panel" id="token-panel" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>
+        <div class="field grow">
+          <label class="label" for="api-token" data-i18n="token.label">API token</label>
+          <input type="password" id="api-token" autocomplete="off" spellcheck="false">
+        </div>
+        <button type="button" class="btn" id="token-save" data-i18n="token.save">Use token</button>
+        <p class="hint full" data-i18n="token.hint">This playground calls the hosted API. The token is kept in this browser tab only and sent as a bearer token.</p>
+      </div>
+
+      <div class="controls">
+        <div class="field">
+          <label class="label" for="v-path" data-i18n="verify.path">File name</label>
+          <input type="text" id="v-path" spellcheck="false" autocomplete="off" placeholder="app.py">
+        </div>
+        <div class="field">
+          <label class="label" for="v-lang" data-i18n="verify.lang">Language</label>
+          <select id="v-lang"></select>
+        </div>
+        <div class="field">
+          <span class="label" id="v-policy-label" data-i18n="verify.policy">Judge as</span>
+          <div class="seg" role="group" aria-labelledby="v-policy-label" id="v-policy">
+            <button type="button" class="seg-btn" data-policy="verify" aria-pressed="true" data-i18n="policy.verify">Claimed fix</button>
+            <button type="button" class="seg-btn" data-policy="gate" aria-pressed="false" data-i18n="policy.gate">Ordinary change</button>
+          </div>
+        </div>
+        <div class="field toggles">
+          <label class="check"><input type="checkbox" id="v-strict"><span data-i18n="verify.strict">Public API must not break</span></label>
+          <label class="check" id="v-analyser-wrap" hidden><input type="checkbox" id="v-analyser"><span data-i18n="verify.analyser">Also run bandit (Python)</span></label>
+        </div>
+      </div>
+
+      <fieldset class="threats">
+        <legend class="label" data-i18n="verify.threats">Claimed to fix</legend>
+        <p class="hint" data-i18n="verify.threatsHint">A dangerous pattern of a claimed class that survives the change blocks it.</p>
+        <div class="chips" id="v-threats"></div>
+      </fieldset>
+
+      <div class="editors">
+        <div class="editor" id="ed-before">
+          <div class="editor-head">
+            <label class="label" for="ta-before" data-i18n="verify.before">Before</label>
+            <input type="file" class="file-input" id="file-before" tabindex="-1" aria-hidden="true">
+            <button type="button" class="btn" data-open="file-before"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><span data-i18n="editor.open">Open file</span></button>
+            <button type="button" class="btn icon-only" data-clear="ed-before" aria-label="Clear" data-i18n-attr="aria-label:editor.clear"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="editor-body">
+            <div class="gutter" aria-hidden="true"><div class="gutter-inner"></div></div>
+            <textarea class="code" id="ta-before" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" data-i18n-attr="placeholder:editor.dropBefore" placeholder="Paste or drop the original code"></textarea>
+            <div class="line-flash" aria-hidden="true"></div>
+          </div>
+          <div class="editor-foot"><span data-foot></span><span class="hint" data-i18n="editor.drop">Drop a file here</span></div>
+        </div>
+        <div class="editor" id="ed-after">
+          <div class="editor-head">
+            <label class="label" for="ta-after" data-i18n="verify.after">After</label>
+            <input type="file" class="file-input" id="file-after" tabindex="-1" aria-hidden="true">
+            <button type="button" class="btn" data-open="file-after"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><span data-i18n="editor.open">Open file</span></button>
+            <button type="button" class="btn icon-only" data-clear="ed-after" aria-label="Clear" data-i18n-attr="aria-label:editor.clear"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="editor-body">
+            <div class="gutter" aria-hidden="true"><div class="gutter-inner"></div></div>
+            <textarea class="code" id="ta-after" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" data-i18n-attr="placeholder:editor.dropAfter" placeholder="Paste or drop the code after the change"></textarea>
+            <div class="line-flash" aria-hidden="true"></div>
+          </div>
+          <div class="editor-foot"><span data-foot></span><span class="hint" data-i18n="editor.drop">Drop a file here</span></div>
+        </div>
+      </div>
+
+      <div class="runbar">
+        <button type="button" class="btn primary" id="v-run"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span data-i18n="verify.run">Verify</span></button>
+        <span class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+      </div>
+      <div class="results" id="v-results" aria-busy="false"></div>
+    </section>
+
+    <!-- ====================================== GATE ====================================== -->
+    <section class="screen" id="screen-gate" aria-labelledby="h-gate" hidden>
+      <div class="screen-head">
+        <div>
+          <h1 id="h-gate" tabindex="-1" data-i18n="gate.title">Gate a change set</h1>
+          <p data-i18n="gate.lede">Check every changed file in a git repository. Only what the change itself introduces blocks; old code does not fail a new change.</p>
+        </div>
+      </div>
+      <div class="controls">
+        <div class="field span2">
+          <label class="label" for="g-repo" data-i18n="gate.repo">Repository folder</label>
+          <input type="text" id="g-repo" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="field">
+          <label class="label" for="g-base" data-i18n="gate.base">Compare with</label>
+          <input type="text" id="g-base" spellcheck="false" autocomplete="off" value="HEAD">
+        </div>
+        <div class="field toggles">
+          <label class="check"><input type="checkbox" id="g-staged"><span data-i18n="gate.staged">Staged changes only</span></label>
+          <label class="check"><input type="checkbox" id="g-strict"><span data-i18n="verify.strict">Public API must not break</span></label>
+        </div>
+      </div>
+      <p class="hint" data-i18n="gate.baseHint">A branch, tag or commit, for example HEAD, main or origin/main. Without "staged only" the working tree is compared.</p>
+      <div class="runbar">
+        <button type="button" class="btn primary" id="g-run"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span data-i18n="gate.run">Gate changes</span></button>
+        <span class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+      </div>
+      <div class="results" id="g-results" aria-busy="false"></div>
+    </section>
+
+    <!-- ===================================== HARDEN ===================================== -->
+    <section class="screen" id="screen-harden" aria-labelledby="h-harden" hidden>
+      <div class="screen-head">
+        <div>
+          <h1 id="h-harden" tabindex="-1" data-i18n="harden.title">Harden with your own model</h1>
+          <p data-i18n="harden.lede">A model of your choice proposes a hardened version; Saikou verifies it. Only output that passes can be written, and only after you confirm.</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="h-path" data-i18n="harden.path">File to harden</label>
+        <div class="inline">
+          <input type="text" id="h-path" spellcheck="false" autocomplete="off" data-i18n-attr="placeholder:harden.pathPh" placeholder="Full path, for example C:\project\app.py">
+          <button type="button" class="btn" id="h-load"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><span data-i18n="harden.load">Load</span></button>
+        </div>
+        <p class="hint" id="h-loaded" aria-live="polite"></p>
+      </div>
+
+      <div class="editor single" id="ed-harden">
+        <div class="editor-head">
+          <label class="label" for="ta-harden" data-i18n="harden.code">Code</label>
+          <button type="button" class="btn icon-only" data-clear="ed-harden" aria-label="Clear" data-i18n-attr="aria-label:editor.clear"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+        </div>
+        <div class="editor-body">
+          <div class="gutter" aria-hidden="true"><div class="gutter-inner"></div></div>
+          <textarea class="code" id="ta-harden" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" data-i18n-attr="placeholder:harden.codePh" placeholder="Load a file above, or paste code (pasted code can be hardened but not written)"></textarea>
+          <div class="line-flash" aria-hidden="true"></div>
+        </div>
+        <div class="editor-foot"><span data-foot></span><span class="hint" data-i18n="editor.drop">Drop a file here</span></div>
+      </div>
+
+      <fieldset class="providers-set">
+        <legend class="label" data-i18n="harden.provider">Model provider</legend>
+        <div class="providers" id="h-providers"><p class="hint" data-i18n="state.loading">Loading...</p></div>
+      </fieldset>
+      <div class="controls">
+        <div class="field">
+          <label class="label" for="h-model" data-i18n="harden.model">Model</label>
+          <input type="text" id="h-model" list="h-models" spellcheck="false" autocomplete="off">
+          <datalist id="h-models"></datalist>
+        </div>
+        <div class="field toggles">
+          <label class="check" id="h-analyser-wrap" hidden><input type="checkbox" id="h-analyser" checked><span data-i18n="verify.analyser">Also run bandit (Python)</span></label>
+        </div>
+      </div>
+      <p class="hint" id="h-where"></p>
+      <fieldset class="threats">
+        <legend class="label" data-i18n="harden.threats">Threats to address</legend>
+        <div class="chips" id="h-threats"></div>
+      </fieldset>
+      <div class="runbar">
+        <button type="button" class="btn primary" id="h-run"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span data-i18n="harden.run">Harden and verify</span></button>
+        <span class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+      </div>
+      <div class="results" id="h-results" aria-busy="false"></div>
+    </section>
+
+    <!-- ===================================== CHECKS ===================================== -->
+    <section class="screen" id="screen-checks" aria-labelledby="h-checks" hidden>
+      <div class="screen-head">
+        <div>
+          <h1 id="h-checks" tabindex="-1" data-i18n="checks.title">What Saikou checks</h1>
+          <p data-i18n="checks.lede">Every check, how it is established, and when it blocks. Nothing is added up into a score.</p>
+        </div>
+      </div>
+      <details class="fold" id="c-legend"><summary><svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg><span data-i18n="checks.legend">How to read this</span></summary><div class="fold-body" id="c-legend-body"></div></details>
+      <div class="filters">
+        <div class="field">
+          <label class="label" for="c-q" data-i18n="checks.search">Search</label>
+          <input type="search" id="c-q" spellcheck="false" autocomplete="off" data-i18n-attr="placeholder:checks.searchPh" placeholder="nosec, eval, guard ...">
+        </div>
+        <div class="field">
+          <label class="label" for="c-prov" data-i18n="checks.prov">Established by</label>
+          <select id="c-prov"></select>
+        </div>
+        <div class="field">
+          <label class="label" for="c-sev" data-i18n="checks.sev">Severity</label>
+          <select id="c-sev"></select>
+        </div>
+        <div class="field">
+          <label class="label" for="c-applies" data-i18n="checks.applies">Applies to</label>
+          <select id="c-applies"></select>
+        </div>
+      </div>
+      <p class="hint" id="c-count" aria-live="polite"></p>
+      <div class="check-list" id="c-list"></div>
+    </section>
+
+    <!-- ===================================== HISTORY ==================================== -->
+    <section class="screen" id="screen-history" aria-labelledby="h-history" hidden>
+      <div class="screen-head">
+        <div>
+          <h1 id="h-history" tabindex="-1" data-i18n="history.title">History</h1>
+          <p data-i18n="history.lede">Summaries of your recent runs, kept in this browser only. No code is stored.</p>
+        </div>
+        <button type="button" class="btn" id="hist-clear"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg><span data-i18n="history.clear">Clear history</span></button>
+      </div>
+      <div id="hist-list"></div>
+    </section>
+  </main>
+</div>
+
+<div class="sr-only" id="live" aria-live="polite" aria-atomic="true"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<dialog id="dlg" aria-labelledby="dlg-title" aria-describedby="dlg-body">
+  <div class="dialog-body">
+    <h2 id="dlg-title"></h2>
+    <div id="dlg-body"></div>
+  </div>
+  <div class="dialog-actions">
+    <button type="button" class="btn" id="dlg-cancel" data-i18n="dlg.cancel">Cancel</button>
+    <button type="button" class="btn primary" id="dlg-ok"></button>
+  </div>
+</dialog>
+</body>
+</html>

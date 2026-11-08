@@ -1,0 +1,22 @@
+{
+  "javascript": {
+    "files": 1,
+    "gating_false_block_rate": 0.0,
+    "gating_blocked_files": 0,
+    "gating_checks": {},
+    "gating_examples": [],
+    "newfile_block_rate": 0.0,
+    "newfile_checks_by_file": {}
+  },
+  "python": {
+    "files": 380,
+    "gating_false_block_rate": 0.0,
+    "gating_blocked_files": 0,
+    "gating_checks": {},
+    "gating_examples": [],
+    "newfile_block_rate": 2.11,
+    "newfile_checks_by_file": {
+      "sink_dynamic_exec": 8
+    }
+  }
+}

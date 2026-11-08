@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "saikou"
+dynamic = ["version"]
+description = "Prove that a security fix is real, not just claimed: catches suppression laundering, unwired guards, partial fixes, elision and API breaks in AI-made changes."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.9"
+authors = [{ name = "The Saikou authors" }]
+keywords = ["security", "hardening", "sast", "ai", "code-review", "ci", "sarif", "verification"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[project.optional-dependencies]
+analyser = ["bandit>=1.7.3"]
+api = ["fastapi>=0.115,<1.0", "uvicorn[standard]>=0.30", "pydantic>=2.7,<3.0"]
+dev = ["pytest>=8", "bandit>=1.7.3", "fastapi>=0.115,<1.0", "pydantic>=2.7,<3.0", "httpx>=0.27"]
+
+[project.scripts]
+saikou = "saikou.cli:main"
+
+[project.urls]
+Homepage = "https://saikou.tech"
+Source = "https://github.com/SuperfastSimon/saikou"
+Issues = "https://github.com/SuperfastSimon/saikou/issues"
+
+[tool.hatch.version]
+path = "saikou/engine.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["saikou"]
+
+[tool.hatch.build.targets.sdist]
+include = ["saikou", "tests", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "saikou_harden.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,4 @@
+# One line-ending convention for a repo that is built and tested on Windows, macOS and Linux.
+* text=auto eol=lf
+*.png binary
+*.ico binary

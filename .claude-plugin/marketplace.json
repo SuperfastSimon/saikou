@@ -1,0 +1,11 @@
+{
+  "name": "saikou",
+  "owner": { "name": "The Saikou authors" },
+  "plugins": [
+    {
+      "name": "saikou-harden",
+      "source": "./plugins/saikou-harden",
+      "description": "Harden code, then prove the fix is real before it is written."
+    }
+  ]
+}

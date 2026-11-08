@@ -1,0 +1,5 @@
+# The engine and CLI need no dependencies. This file is only for running the
+# optional HTTP service from a checkout; prefer `pip install "saikou[api]"`.
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+pydantic>=2.7,<3.0

@@ -1,0 +1,138 @@
+name: "Saikou verify"
+description: "Block pull requests that fake security fixes: new security-analyser suppressions, unwired guards, partial shared-sink fixes, AI elision, weakened analyser config."
+author: "The Saikou authors"
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  base:
+    description: "Base ref or SHA. Default: the pull request base, or the previous commit on push."
+    required: false
+    default: ""
+  claimed-threats:
+    description: "Threat classes this change claims to fix (e.g. injection,crypto). A surviving sink of a claimed class blocks."
+    required: false
+    default: ""
+  strict-api:
+    description: "Block removed or incompatibly changed public Python API."
+    required: false
+    default: "false"
+  paths:
+    description: "Space-separated paths to limit the check to (default: whole repository)."
+    required: false
+    default: ""
+  warn-only:
+    description: "Comma-separated check ids reported as warnings instead of hard fails, for every file. To leave one file out (a vendored bundle over 1 MB that blocks with content_not_checked), use paths with a pathspec instead, e.g. \". :(exclude)vendor/bundle.js\"."
+    required: false
+    default: ""
+  only-agent-prs:
+    description: "Run only when the pull request author is a bot or listed in agent-authors."
+    required: false
+    default: "false"
+  agent-authors:
+    description: "Comma-separated GitHub logins treated as AI agents (in addition to any bot account)."
+    required: false
+    default: "Copilot,copilot-swe-agent,devin-ai-integration,codex,claude"
+  analyser:
+    description: "Also run bandit twice (normal and --ignore-nosec) on changed Python files."
+    required: false
+    default: "false"
+  upload-sarif:
+    description: "Upload findings to GitHub code scanning (needs permissions: security-events: write, and code scanning on the repository: every public one, private ones only with GitHub Advanced Security). Set to false otherwise; the job summary still lists every finding."
+    required: false
+    default: "true"
+  fail-on-findings:
+    description: "Fail the job when a hard fail is found."
+    required: false
+    default: "true"
+
+outputs:
+  blocked:
+    description: "'true' when at least one hard fail was found."
+    value: ${{ steps.run.outputs.blocked }}
+  skipped:
+    description: "'true' when the check did not run (not an agent PR in only-agent-prs mode)."
+    value: ${{ steps.gate.outputs.skipped }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: gate
+      shell: bash
+      env:
+        ONLY_AGENT: ${{ inputs.only-agent-prs }}
+        AGENTS: ${{ inputs.agent-authors }}
+        AUTHOR: ${{ github.event.pull_request.user.login }}
+        AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+      run: |
+        skipped=false
+        if [ "$ONLY_AGENT" = "true" ]; then
+          skipped=true
+          if [ "$AUTHOR_TYPE" = "Bot" ] || [[ "$AUTHOR" == *"[bot]" ]]; then skipped=false; fi
+          IFS=',' read -ra list <<< "$AGENTS"
+          for a in "${list[@]}"; do
+            if [ "$(echo "$a" | xargs)" = "$AUTHOR" ]; then skipped=false; fi
+          done
+          if [ "$skipped" = "true" ]; then echo "Saikou: PR by '$AUTHOR' is not an agent PR; skipping."; fi
+        fi
+        echo "skipped=$skipped" >> "$GITHUB_OUTPUT"
+
+    - if: steps.gate.outputs.skipped != 'true'
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - if: steps.gate.outputs.skipped != 'true'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        ANALYSER: ${{ inputs.analyser }}
+      run: |
+        python -m pip install --disable-pip-version-check --quiet "$ACTION_PATH"
+        if [ "$ANALYSER" = "true" ]; then python -m pip install --quiet "bandit>=1.7.3"; fi
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --no-tags --quiet --unshallow origin || true
+        fi
+
+    - id: run
+      if: steps.gate.outputs.skipped != 'true'
+      shell: bash
+      env:
+        INPUT_BASE: ${{ inputs.base }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+        PUSH_BEFORE: ${{ github.event.before }}
+        CLAIMS: ${{ inputs.claimed-threats }}
+        STRICT_API: ${{ inputs.strict-api }}
+        PATHS: ${{ inputs.paths }}
+        WARN_ONLY: ${{ inputs.warn-only }}
+        ANALYSER: ${{ inputs.analyser }}
+      run: |
+        base="${INPUT_BASE:-${PR_BASE:-$PUSH_BEFORE}}"
+        if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+          base="$(git rev-parse HEAD~1)"
+        fi
+        args=(diff --base "$base" --head HEAD --sarif-file saikou.sarif --summary "$GITHUB_STEP_SUMMARY")
+        if [ -n "$CLAIMS" ]; then args+=(--claimed-threats "$CLAIMS"); fi
+        if [ "$STRICT_API" = "true" ]; then args+=(--strict-api); fi
+        if [ -n "$WARN_ONLY" ]; then args+=(--warn-only "$WARN_ONLY"); fi
+        if [ "$ANALYSER" = "true" ]; then args+=(--analyser); fi
+        if [ -n "$PATHS" ]; then read -ra extra <<< "$PATHS"; args+=(-- "${extra[@]}"); fi
+        set +e
+        saikou "${args[@]}"
+        code=$?
+        set -e
+        if [ "$code" -ge 2 ]; then echo "::error::saikou failed to run (exit $code)"; exit "$code"; fi
+        if [ "$code" -eq 1 ]; then echo "blocked=true" >> "$GITHUB_OUTPUT"; else echo "blocked=false" >> "$GITHUB_OUTPUT"; fi
+
+    - if: steps.gate.outputs.skipped != 'true' && inputs.upload-sarif == 'true' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: saikou.sarif
+        category: saikou
+
+    - if: steps.gate.outputs.skipped != 'true' && inputs.fail-on-findings == 'true' && steps.run.outputs.blocked == 'true'
+      shell: bash
+      run: |
+        echo "::error::Saikou blocked this change: see the job summary for each finding and how it was established."
+        exit 1

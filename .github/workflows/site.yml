@@ -1,0 +1,74 @@
+name: site
+
+# Browser checks on the staged saikou.tech site. Publishing is a separate, manual step.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/stage_site.py"
+      - "scripts/check_site.py"
+      - "qa/site/**"
+      - ".github/workflows/site.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "scripts/stage_site.py"
+      - "scripts/check_site.py"
+      - "qa/site/**"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [full, interim]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: qa/site/package-lock.json
+      - name: Stage the site (runs scripts/check_site.py)
+        run: python scripts/stage_site.py --mode ${{ matrix.mode }} --out "$RUNNER_TEMP/site-${{ matrix.mode }}"
+      - name: Install the QA tools
+        working-directory: qa/site
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+      - name: Browser checks (origin, console, axe WCAG 2.1 A/AA, overflow, checker)
+        working-directory: qa/site
+        env:
+          SITE_DIR: ${{ runner.temp }}/site-${{ matrix.mode }}
+        run: npx playwright test
+      - name: Lighthouse (report only, never fails the job)
+        if: ${{ !cancelled() }}
+        working-directory: qa/site
+        run: >
+          npm run lighthouse --
+          --collect.staticDistDir="$RUNNER_TEMP/site-${{ matrix.mode }}"
+          --collect.settings.chromeFlags="--no-sandbox"
+        continue-on-error: true
+      # Screenshots and reports are for a person to look at; the checks above are the gate. A full
+      # artifact quota on the account must not turn a passing run red.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        with:
+          name: site-qa-${{ matrix.mode }}
+          path: |
+            qa/site/test-results
+            qa/site/playwright-report
+            qa/site/lhci-report
+          retention-days: 14
+          if-no-files-found: ignore

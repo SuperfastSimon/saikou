@@ -1,0 +1,8 @@
+- id: saikou
+  name: saikou (block faked security fixes in staged changes)
+  description: Verifies the staged change against HEAD; exits 1 on a new security-analyser suppression, unwired guard, shared-sink path, AI elision marker or weakened analyser config.
+  entry: saikou diff --base HEAD --staged --no-merge-base
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]

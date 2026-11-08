@@ -1,0 +1,30 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# local secrets and config - never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# local scratch
+saikou.sarif
+.claude/launch.json
+qa/site/node_modules/
+qa/site/test-results/
+qa/site/playwright-report/
+qa/site/lhci-report/
+
+# private notes and launch material - never published
+internal/
+CLAUDE.local.md
+
+# agent worktrees (Claude Code)
+.claude/worktrees/

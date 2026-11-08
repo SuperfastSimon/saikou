@@ -1,0 +1,14 @@
+{
+  "python": {
+    "files": 600,
+    "gating_false_block_rate": 0.0,
+    "gating_blocked_files": 0,
+    "gating_checks": {},
+    "gating_examples": [],
+    "newfile_block_rate": 5.5,
+    "newfile_checks_by_file": {
+      "sink_dynamic_exec": 28,
+      "sink_shell_true": 6
+    }
+  }
+}

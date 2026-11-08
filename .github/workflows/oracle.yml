@@ -1,0 +1,57 @@
+name: oracle
+
+# Asks the real tools again whether they honour each suppression marker of
+# scripts/suppression_oracle.py (Python) and scripts/suppression_oracle_js.py (JavaScript and
+# TypeScript) and compares the answers with the frozen ones. A change means a new bandit, ruff,
+# semgrep, flake8, ESLint or TypeScript reads a marker differently: read the output, then refresh the
+# reference (top of the scripts). Python 3.11 because the frozen answers were taken there.
+#
+# The frozen answers were taken on Windows and these jobs run on Linux. Several pairs use CR, CRLF,
+# U+2028, a BOM or a shebang, which a tool may read differently per platform. Run this workflow once
+# by hand (workflow_dispatch) before trusting it; a first-run difference on exactly those pairs is a
+# platform difference to look at, not a reason to re-freeze.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install bandit ruff semgrep
+      - run: python scripts/suppression_oracle.py generate --work "$RUNNER_TEMP/oracle" --bandit "$(which bandit)"
+      - run: >-
+          python scripts/suppression_oracle.py tools --work "$RUNNER_TEMP/oracle"
+          --bandit "$(which bandit)" --ruff "$(which ruff)" --semgrep "$(which semgrep)"
+      - run: python scripts/suppression_oracle.py drift --work "$RUNNER_TEMP/oracle"
+
+  drift-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python -m pip install semgrep
+      - run: |
+          mkdir -p "$RUNNER_TEMP/node"
+          cd "$RUNNER_TEMP/node"
+          npm init -y
+          npm install --no-audit --no-fund eslint@9 eslint-plugin-security@3 typescript@5
+      - run: python scripts/suppression_oracle_js.py generate --work "$RUNNER_TEMP/oracle-js"
+      - run: >-
+          python scripts/suppression_oracle_js.py tools --work "$RUNNER_TEMP/oracle-js"
+          --eslint-dir "$RUNNER_TEMP/node" --semgrep "$(which semgrep)"
+      - run: python scripts/suppression_oracle_js.py drift --work "$RUNNER_TEMP/oracle-js"

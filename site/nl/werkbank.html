@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vergelijk code voor en na een beveiligingsfix - Saikou</title>
+<meta name="description" content="Plak code van vóór en na een beweerde beveiligingsfix. Checks in je browser tonen wat de wijziging toevoegde, liet staan of weghaalde. Er wordt niets verstuurd.">
+<meta name="theme-color" content="#07080a">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/home.css">
+<link rel="icon" href="../Saikou.tech-favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://saikou.tech/nl/werkbank.html">
+<link rel="alternate" hreflang="en" href="https://saikou.tech/tools/checker.html">
+<link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/werkbank.html">
+<link rel="alternate" hreflang="x-default" href="https://saikou.tech/tools/checker.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Saikou">
+<meta property="og:title" content="Vergelijk code voor en na een beveiligingsfix - Saikou">
+<meta property="og:description" content="Plak code van vóór en na een beweerde beveiligingsfix. Checks in je browser tonen wat de wijziging toevoegde, liet staan of weghaalde. Er wordt niets verstuurd.">
+<meta property="og:url" content="https://saikou.tech/nl/werkbank.html">
+<meta property="og:locale" content="nl_NL">
+<meta property="og:locale:alternate" content="en_GB">
+<meta property="og:image" content="https://saikou.tech/assets/og-nl.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Een AI-fix van één regel die alleen een nosec-commentaar toevoegt aan een aanroep met shell=True, door Saikou geblokkeerd.">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip" href="#main">Naar de inhoud</a>
+<header class="site-head"><div class="wrap">
+  <a class="brand" href="index.html"><img src="../Saikou.tech-logo-flat-hor.svg" alt="Saikou" width="94" height="26"></a>
+  <nav class="nav" aria-label="Hoofdmenu">
+    <a href="index.html#demo">Demo</a><a href="index.html#lezen">Rapport lezen</a><a href="index.html#geverifieerd">Bewijs</a><a href="index.html#gebruik">Gebruik</a><a href="index.html#vragen">Vragen</a>
+    <a href="werkbank.html" aria-current="page">Probeer in je browser</a><a href="nis2.html">Diensten &amp; NIS2</a>
+    <a class="lang" href="../tools/checker.html" hreflang="en" lang="en">EN</a>
+  </nav>
+</div></header>
+
+<main id="main">
+<div class="tool-bar"><div class="wrap">
+  <h1>Kijk wat een fix veranderde, niet wat hij beweert.</h1>
+  <p class="scope">Mechanische patroonchecks, als JavaScript in je browser. De checks op gevaarlijke patronen zijn geschreven voor Python; de checks op onderdrukkingen dekken ook JavaScript/TypeScript, Java en C#. Geen syntaxboom, geen externe analyzer, geen server: wat je plakt, wordt nergens heen gestuurd.</p>
+</div></div>
+
+<section id="plakken"><div class="wrap">
+  <h2>Plak de code</h2>
+  <p class="narrow-p">Zet de oorspronkelijke code in Voor en de gewijzigde code in Na, en klik op Controleer. Een voorbeeld wordt meteen gecontroleerd zodra je het laadt. De pagina opent met de nepfix al gecontroleerd.</p>
+  <div class="presets" role="group" aria-labelledby="ex-label">
+    <span id="ex-label">Laad een voorbeeld (vervangt beide vakken):</span>
+    <button class="preset" data-preset="fake" type="button">Nepfix (nosec)</button>
+    <button class="preset" data-preset="real" type="button">Echte fix</button>
+    <button class="preset" data-preset="secret" type="button">Nieuw hardcoded geheim</button>
+  </div>
+  <div class="io">
+    <div><label for="ta-before">Voor</label><textarea id="ta-before" spellcheck="false" placeholder="Plak de oorspronkelijke code"></textarea></div>
+    <div><label for="ta-after">Na</label><textarea id="ta-after" spellcheck="false" placeholder="Plak de gewijzigde code"></textarea></div>
+  </div>
+  <p><button class="run" id="run" type="button">Controleer</button><span class="run-note">Draait op deze pagina. Geen netwerkverkeer.</span></p>
+  <noscript><p class="narrow-p">Deze werkbank heeft JavaScript nodig. Alles draait op deze pagina; er wordt niets verstuurd.</p></noscript>
+</div></section>
+
+<section id="resultaat"><div class="wrap">
+  <h2>Resultaat</h2>
+  <div class="results">
+    <div class="results-head" role="status" aria-live="polite" aria-atomic="true"><div class="stamp" id="stamp">&mdash;</div><div class="results-summary" id="summary"></div></div>
+    <div id="rows"></div>
+    <div class="results-foot">Dit laat zien wat er gevonden is, geen garantie dat er niets gemist is. Het ontbreken van een bevinding is nooit bewijs van een fix.</div>
+  </div>
+</div></section>
+
+<section id="lezen" class="tint"><div class="wrap">
+  <h2>Zo lees je het resultaat</h2>
+  <dl class="ruled">
+    <div><dt>Waar het naar kijkt</dt><dd>
+      <p>Onderdrukkingen: <code># nosec</code>, <code># noqa</code>, <code># type: ignore</code>, <code>usedforsecurity=False</code>, <code>// eslint-disable</code>, <code>@ts-ignore</code>, <code>@ts-nocheck</code>, <code>@SuppressWarnings</code> en <code>#pragma warning disable</code>.</p>
+      <p>Gevaarlijke patronen: <code>shell=True</code>, <code>verify=False</code>, <code>debug=True</code>, <code>eval(</code> of <code>exec(</code> met een argument dat met een naam begint, zoals een variabele, <code>md5(</code> of <code>sha1(</code>, en een naam die eindigt op password, secret, api_key of token en een waarde tussen aanhalingstekens krijgt van 8 tekens of meer.</p>
+      <p>Plaatshouders voor weggelaten code: <code lang="en">rest unchanged</code> of <code lang="en">rest of the code unchanged</code>, <code>rest blijft hetzelfde</code> of <code>rest blijft ongewijzigd</code>, <code lang="en">omitted for brevity</code>, <code lang="en">implementation here</code> of <code lang="en">implementation goes here</code>, en een regel met alleen <code>...</code>.</p>
+      <p>En of Voor en Na identiek zijn, of alleen in commentaar en witruimte verschillen.</p>
+      <p>De gevaarlijke patronen volgen Python-syntax (keyword-argumenten, <code>True</code> en <code>False</code>). Code in andere talen krijgt vooral de checks op onderdrukkingen en plaatshouders.</p>
+    </dd></div>
+    <div><dt>De stempel</dt><dd><p><b>Geblokkeerd</b> als minstens &eacute;&eacute;n bevinding een hard fail is. <b>Nog open</b> als er geen hard fail is, maar een gevaarlijk patroon uit Voor ook in Na voorkomt. <b>Niet geblokkeerd</b> als geen bevinding een hard fail of waarschuwing is: er is niets gemeld, of een gevaarlijk patroon uit Voor staat niet meer in Na. Geen van de drie zegt dat de code veilig is.</p></dd></div>
+    <div><dt>Elke bevinding</dt><dd>
+      <p><span class="pill fail" lang="en">Hard fail</span> blokkeert. De wijziging voegde een onderdrukking of een gevaarlijk patroon toe, Na bevat een mogelijke plaatshouder voor weggelaten code, of Voor en Na zijn op commentaar en witruimte na gelijk.</p>
+      <p><span class="pill warn">Waarschuwing</span> blokkeert niet: een gevaarlijk patroon dat in Voor stond, komt ook in Na voor, niet vaker dan eerst.</p>
+      <p><span class="pill pass" lang="en">Pass</span> betekent dat een gevaarlijk patroon uit Voor niet meer in Na staat, of dat geen enkele check iets meldde. Een verdwenen patroon laat zien dat de code daar veranderde, niet dat de vervanging klopt.</p>
+    </dd></div>
+    <div><dt>Hoe het is gevonden</dt><dd><p><span class="chip" lang="en">mechanical</span> bij elke bevinding hier. Elke check telt markers, zinsneden of codepatronen in de tekst, of vergelijkt de tekst zonder witruimte, zonder <code>/* */</code>-blokken en zonder alles na <code>#</code> of <code>//</code>, ook binnen strings. Geen enkele check parset de code, dus een patroon in commentaar of in een string telt ook mee. De engine heeft daarnaast bevindingen met <span class="chip" lang="en">parser</span>, uit syntaxbomen, en met <span class="chip" lang="en">tool</span>, uit bandit. Deze pagina heeft geen van beide.</p></dd></div>
+  </dl>
+</div></section>
+
+<section id="grenzen"><div class="wrap">
+  <h2>Wat deze pagina niet doet</h2>
+  <ul class="limits narrow-p">
+    <li><strong>Geen syntaxboom.</strong> Deze pagina vergelijkt alleen tekst en patronen. Voor Python-code parset de engine beide versies; welke checks andere talen krijgen, staat onder <a href="index.html#vragen">Vragen</a> op de homepage.</li>
+    <li><strong>Geen externe analyzer.</strong> De engine kan bandit twee keer draaien, normaal en met onderdrukkingen genegeerd, om te zien wat een onderdrukking verbergt. Deze pagina kan dat niet.</li>
+    <li><strong>Geen data-flow-analyse.</strong> Onveilige invoer die via een hulpfunctie een gevaarlijke aanroep bereikt, vind je hier niet.</li>
+    <li><strong>Geen beweerde dreiging.</strong> Je kunt niet opgeven wat de fix zegt te repareren, dus een gevaarlijk patroon dat blijft staan is hier alleen een waarschuwing. De engine blokkeert het als je de dreigingsklasse meegeeft met <code>--claimed-threats</code>, zoals in stap 2 onder <a href="index.html#gebruik">Gebruik</a>.</li>
+    <li><strong>Geen check op afgebroken code.</strong> Is Na afgebroken, dan staat een patroon uit het ontbrekende deel als verwijderd, met een Pass. Deze pagina weigert alleen een leeg vak. De engine blokkeert een leeg resultaat en waarschuwt als de uitvoer afgebroken lijkt.</li>
+    <li><strong>Commentaar wordt op patroon herkend.</strong> Alles na <code>#</code> of <code>//</code> telt als commentaar, ook binnen een string zoals een URL. Een echte wijziging daar kan worden gemeld als alleen commentaar of witruimte.</li>
+    <li><strong>Grove patroonchecks.</strong> Elke aanroep van <code>md5(</code> of <code>sha1(</code> telt, ook voor een bestandschecksum; de eigen check van de engine meldt ze alleen bij wachtwoordgegevens. De check op geheimen kijkt alleen naar het einde van de naam en de lengte van de waarde; de engine splitst de naam daarnaast in woorden en slaat waarden over die een URL, e-mailadres of getal met punten (zoals een versie) zijn.</li>
+  </ul>
+  <p class="narrow-p">Voor de checks van de engine draai je hem op je eigen machine:</p>
+  <pre tabindex="0" class="term narrow-p">pip install saikou
+saikou verify before.py after.py --claimed-threats injection</pre>
+  <p class="narrow-p">Vervang <code>injection</code> door de dreigingsklasse die je fix zegt te repareren. Voor de bandit-stap (alleen Python) installeer je met <code>pip install "saikou[analyser]"</code> en voeg je <code>--analyser</code> toe. Of gebruik de agent <code>code-hardener</code> in Claude Code. <a href="index.html#gebruik">Meer manieren om het te draaien</a>.</p>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>&copy; 2026 Saikou. Open source onder Apache-2.0.</span>
+  <span><a href="../legal.html#nl">Juridisch &amp; privacy</a> &middot; <a href="https://github.com/SuperfastSimon/saikou">GitHub</a> &middot; <a href="mailto:ceo@saikou.tech">Contact</a></span>
+  <span>Deze site laadt geen scripts, lettertypen of trackers van derden.</span>
+</div></footer>
+<script src="../assets/checker.js"></script>
+</body>
+</html>

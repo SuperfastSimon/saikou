@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Controleer beveiligingsfixes van AI vóór je merget - Saikou</title>
+<meta name="description" content="Open-source controle voor beveiligingsfixes van AI: blokkeert fixes die alleen op een fix lijken, zoals een nieuwe nosec of een halve fix. Lokaal, geen score.">
+<meta name="theme-color" content="#07080a">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/home.css">
+<link rel="icon" href="../Saikou.tech-favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://saikou.tech/nl/">
+<link rel="alternate" hreflang="en" href="https://saikou.tech/">
+<link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/">
+<link rel="alternate" hreflang="x-default" href="https://saikou.tech/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Saikou">
+<meta property="og:title" content="Controleer beveiligingsfixes van AI vóór je merget - Saikou">
+<meta property="og:description" content="Open-source controle voor beveiligingsfixes van AI: blokkeert fixes die alleen op een fix lijken, zoals een nieuwe nosec of een halve fix. Lokaal, geen score.">
+<meta property="og:url" content="https://saikou.tech/nl/">
+<meta property="og:locale" content="nl_NL">
+<meta property="og:locale:alternate" content="en_GB">
+<meta property="og:image" content="https://saikou.tech/assets/og-nl.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Een AI-fix van één regel die alleen een nosec-commentaar toevoegt aan een aanroep met shell=True, door Saikou geblokkeerd.">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Saikou",
+ "url": "https://saikou.tech/nl/", "inLanguage": "nl",
+ "description": "Open-source controle voor beveiligingsfixes van AI: vergelijkt code vóór en na een beweerde fix en blokkeert wijzigingen die er alleen uitzien als een fix, zoals nieuwe analyzer-onderdrukkingen, ongebruikte sanitizers, halve fixes en weggelaten code. Geen score.",
+ "applicationCategory": "DeveloperApplication", "operatingSystem": "Windows, macOS, Linux",
+ "softwareVersion": "1.2.0", "license": "https://www.apache.org/licenses/LICENSE-2.0",
+ "offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR"}}
+</script>
+<script src="../assets/site-data.js" defer></script>
+<script src="../assets/home.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Naar de inhoud</a>
+<header class="site-head"><div class="wrap">
+  <a class="brand" href="index.html"><img src="../Saikou.tech-logo-flat-hor.svg" alt="Saikou" width="94" height="26"></a>
+  <nav class="nav" aria-label="Hoofdmenu">
+    <a href="#demo">Demo</a><a href="#lezen">Rapport lezen</a><a href="#geverifieerd">Bewijs</a><a href="#gebruik">Gebruik</a><a href="#vragen">Vragen</a>
+    <a href="werkbank.html">Probeer in je browser</a><a href="nis2.html">Diensten &amp; NIS2</a>
+    <a class="lang" href="../index.html" hreflang="en" lang="en">EN</a>
+  </nav>
+</div></header>
+<div class="lang-hint" data-lang-hint="en" lang="en" hidden><div class="wrap">
+  <p>This page is also available in English. <a href="../index.html" hreflang="en">Read the English version</a></p>
+  <button type="button" aria-label="Close this notice">Close</button>
+</div></div>
+
+<main id="main">
+<div class="wrap hero hero-split">
+  <div>
+    <h1>Controleer beveiligingsfixes van AI voordat je ze merget.</h1>
+    <p class="lede">Een agent opent een pull request: "injectie opgelost". De scanner is het ermee eens, want de agent heeft er een <code>nosec</code> bij gezet. Saikou vergelijkt de code v&oacute;&oacute;r en n&aacute; en blokkeert fixes die er alleen <em>uitzien</em> als een fix: een nieuwe onderdrukking, een opgeschoonde waarde die niemand gebruikt, &eacute;&eacute;n aanroeper gefixt terwijl de gedeelde sink rauw blijft, code vervangen door <code>// ... existing code ...</code>.</p>
+    <div class="cta">
+      <a class="btn" href="#gebruik">Aan de slag</a>
+      <a class="btn ghost" href="werkbank.html">Probeer het in je browser</a>
+    </div>
+    <p class="meta">v<!--data:version-->1.2.0<!--/data--> &middot; Python 3.9+ &middot; alleen de standaardbibliotheek &middot; draait op je eigen machine &middot; Apache-2.0 &middot; geen score</p>
+  </div>
+  <figure class="proof">
+    <figcaption>E&eacute;n regel van een AI-"fix", uit de demo hieronder (<code><!--data:hero-file-->after_A_fake.py<!--/data--></code>):</figcaption>
+    <pre tabindex="0" class="term fail"><!--data:hero-diff--><span class="pl del">- return subprocess.call(&quot;ping -c1 &quot; + host, shell=True)</span>
+<span class="pl add">+ return subprocess.call(&quot;ping -c1 &quot; + host, shell=True)  # nosec B602</span><!--/data--></pre>
+    <p class="proof-verdict"><span class="stamp fail">Geblokkeerd</span></p>
+    <ul class="proof-findings"><!--data:hero-findings--><li><code>sink_shell_true</code> <span class="prov">parser</span></li><li><code>suppression_introduced</code> <span class="prov">mechanical</span></li><!--/data--></ul>
+  </figure>
+</div>
+
+<section id="probleem"><div class="wrap">
+  <h2>Waarom een schone scan geen bewijs is</h2>
+  <p class="narrow-p">Statische analyzers respecteren onderdrukkingscommentaar. De goedkoopste manier om een bevinding te laten verdwijnen is haar dus het zwijgen op te leggen, en een voor/na-vergelijking van bevindingen meldt dan een verbetering. Vier stappen, waarvan &eacute;&eacute;n een leugen:</p>
+  <ol class="flow">
+    <li><span class="step">De bevinding</span><code>shell=True</code><p>De scanner meldt een risico op commando-injectie.</p></li>
+    <li><span class="step">De "fix"</span><code>+ # nosec B602</code><p>De agent zet er een onderdrukking bij en verandert verder niets.</p></li>
+    <li><span class="step">De scan erna</span><code>bevindingen: 1 &rarr; 0</code><p>De scanner slaat de regel over, en het verschil leest als een fix.</p></li>
+    <li class="flow-end"><span class="step">Saikou</span><code>BLOCKED</code><p>Het vergelijkt de code zelf: de sink is onveranderd en er kwam een onderdrukking bij.</p></li>
+  </ol>
+  <p class="rule">Het ontbreken van een bevinding is nooit bewijs van een fix.</p>
+</div></section>
+
+<section id="demo" class="tint"><div class="wrap">
+  <h2>Zie het werken</h2>
+  <p class="narrow-p">E&eacute;n kwetsbaar bestand (SQL samengesteld met stringformattering, <code>shell=True</code>, MD5 voor wachtwoorden, path traversal) en drie voorgestelde fixes. De diffs, bevindingen en uitvoer hieronder komen van het echte commando, en de testsuite faalt zodra ze er niet meer mee overeenkomen; de bestanden staan in <code>tests/fixtures/demo/</code>. Kies een bevinding om de regel te zien waar ze naar wijst. De uitvoer van Saikou zelf is Engelstalig.</p>
+  <div class="explorer" data-explorer data-label="Drie voorgestelde fixes">
+    <article class="panel" id="case-fake" data-case="fake">
+      <h3><span class="verdict fail">Geblokkeerd</span> De nepfix</h3>
+      <p>Zet er <code>nosec</code>-commentaar en <code>usedforsecurity=False</code> bij. Er wordt niets gerepareerd.</p>
+      <div class="case-view" data-view hidden></div>
+      <details class="raw" open><summary>Uitvoer van <code>saikou verify</code></summary>
+<pre tabindex="0" class="term fail" lang="en"><!--demo:A_fake-->BLOCKED after_A_fake.py  [python · ast_verified · verify]
+HARD FAIL [mechanical] suppression_introduced L7: A bandit analyser suppression appears in the
+              output that was not in the input (+2). Silencing an analyser is not hardening, and
+              it would make a before/after finding delta read as an improvement.
+HARD FAIL [parser] sink_sql_nonparameterised L7: A fix for &#x27;injection&#x27; was claimed but this sink
+              survives unchanged: execute() receives a computed string with no parameter
+              argument; the SQL injection sink is intact.
+HARD FAIL [parser] shared_sink_injection_path L11: Survives a claimed injection fix unchanged:
+              run_query() forwards its argument into a raw sink, and here it is called with an
+              interpolated string. Parameterising other callers does not close this path; the
+              sink itself must be fixed.
+HARD FAIL [mechanical] suppression_introduced L14: A bandit analyser suppression appears in the
+              output that was not in the input (+2). Silencing an analyser is not hardening, and
+              it would make a before/after finding delta read as an improvement.
+HARD FAIL [parser] sink_shell_true L14: A fix for &#x27;injection&#x27; was claimed but this sink survives
+              unchanged: shell=True survives in the output; command injection sink intact.
+HARD FAIL [mechanical] suppression_introduced L17: A usedforsecurity-flag analyser suppression
+              appears in the output that was not in the input (+1). Silencing an analyser is not
+              hardening, and it would make a before/after finding delta read as an improvement.
+
+saikou verify: 1 file(s), 1 blocked, 6 hard fail(s), 0 warning(s).<!--/demo--></pre></details>
+    </article>
+    <article class="panel" id="case-partial" data-case="partial">
+      <h3><span class="verdict fail">Geblokkeerd</span> De halve fix</h3>
+      <p>Repareert de shell-aanroep en de hash, berekent een "veilig" pad dat nooit gebruikt wordt, en laat SQL-injectie bereikbaar via een wrapper.</p>
+      <div class="case-view" data-view hidden></div>
+      <details class="raw" open><summary>Uitvoer van <code>saikou verify</code></summary>
+<pre tabindex="0" class="term fail" lang="en"><!--demo:B_partial-->BLOCKED after_B_partial.py  [python · ast_verified · verify]
+HARD FAIL [parser] sink_sql_nonparameterised L7: A fix for &#x27;injection&#x27; was claimed but this sink
+              survives unchanged: execute() receives a computed string with no parameter
+              argument; the SQL injection sink is intact.
+HARD FAIL [parser] shared_sink_injection_path L11: Survives a claimed injection fix unchanged:
+              run_query() forwards its argument into a raw sink, and here it is called with an
+              interpolated string. Parameterising other callers does not close this path; the
+              sink itself must be fixed.
+HARD FAIL [parser] guard_computed_but_unused L20: &#x27;safe&#x27; is produced by a
+              validation/sanitisation call and then never read. The guard is decorative: the
+              unsanitised value still reaches the sink.
+
+saikou verify: 1 file(s), 1 blocked, 3 hard fail(s), 0 warning(s).<!--/demo--></pre></details>
+    </article>
+    <article class="panel" id="case-real" data-case="real">
+      <h3><span class="verdict pass">Komt erdoor</span> De echte fix</h3>
+      <p>Geparametriseerde queries, een argumentenlijst in plaats van een shell, scrypt met een salt, padcontrole na het resolven.</p>
+      <div class="case-view" data-view hidden></div>
+      <details class="raw" open><summary>Uitvoer van <code>saikou verify</code></summary>
+<pre tabindex="0" class="term pass" lang="en"><!--demo:C_real-->ok      after_C_real.py  [python · ast_verified · verify]
+
+saikou verify: 1 file(s), 0 blocked, 0 hard fail(s), 0 warning(s).<!--/demo--></pre></details>
+    </article>
+  </div>
+  <p class="note">"Komt erdoor" betekent dat geen enkele check de wijziging blokkeerde - niet dat de code veilig is. Zie <a href="#grenzen">wat Saikou niet doet</a>.</p>
+</div></section>
+
+<section id="lezen"><div class="wrap">
+  <h2>Zo lees je een rapport</h2>
+  <p class="narrow-p">Elke bevinding is &eacute;&eacute;n regel. Deze komt uit de nepfix hierboven:</p>
+  <pre tabindex="0" class="term anatomy" lang="en"><!--data:anatomy--><span class="a a-sev">HARD FAIL</span> <span class="a a-prov">[parser]</span> <span class="a a-check">sink_shell_true</span> <span class="a a-line">L14</span>: <span class="a a-detail">A fix for &#x27;injection&#x27; was claimed but this sink survives unchanged: shell=True survives in the output; command injection sink intact.</span><!--/data--></pre>
+  <dl class="legend">
+    <div><dt><span class="a-key a-sev"><!--data:anat-sev-->HARD FAIL<!--/data--></span> ernst</dt><dd>Een hard fail blokkeert het bestand. <code>WARN</code> wordt gemeld en blokkeert niet: iets om naar te kijken, zoals een directive voor de typechecker. Een bestand met minstens &eacute;&eacute;n hard fail is <code>BLOCKED</code> en het commando eindigt met 1 (0 = geen hard fail, 2 = fout), zodat CI erop kan poorten.</dd></div>
+    <div><dt><span class="a-key a-prov"><!--data:anat-prov-->[parser]<!--/data--></span> hoe het is vastgesteld</dt><dd><span class="prov">tool</span> <!--data:prov-tool-->Een externe analyzer (bandit) leverde dit, twee keer gedraaid: normaal en met onderdrukkingen genegeerd.<!--/data--><br><span class="prov">parser</span> <!--data:prov-parser-->Berekend door beide versies tot syntaxbomen te parsen en te vergelijken. Geen tekstgok.<!--/data--><br><span class="prov">mechanical</span> <!--data:prov-mechanical-->Een deterministische tekst- of telcontrole. Betrouwbaar voor waar ze naar zoekt, blind voor betekenis.<!--/data--></dd></div>
+    <div><dt><span class="a-key a-check"><!--data:anat-check-->sink_shell_true<!--/data--></span> de check, en <span class="a-key a-line"><!--data:anat-line-->L14<!--/data--></span> de regel</dt><dd>Elke check heeft een id en een gewone beschrijving; de volledige lijst staat hieronder. Het regelnummer wijst in het bestand na de wijziging.</dd></div>
+    <div><dt>Verificatieniveau, per bestand</dt><dd><code>ast_verified</code> <!--data:tier-ast-verified-->Python: beide versies geparsed; API-oppervlak en sinks berekend, niet beweerd.<!--/data--><br><code>structural</code> <!--data:tier-structural-->Geen parser: alleen tekstuele en structurele checks. Semantiek wordt niet geverifieerd.<!--/data--><br><code>asserted</code> <!--data:tier-asserted-->Onbekende taal: alleen basiscontroles. Elke beweerde fix is van het model, niet van Saikou.<!--/data--></dd></div>
+    <div><dt>Twee modi, twee regels</dt><dd><code>verify</code> beoordeelt een beweerde fix en is streng: een sink die een beweerde fix overleeft, blokkeert. <code>diff</code> poort een gewone pull request en blokkeert alleen wat de wijziging <em>introduceerde</em>, zodat oude code nieuwe pull requests niet laat falen.</dd></div>
+  </dl>
+  <p>Er is geen score: bevindingen worden nooit opgeteld, want een getal wekt vertrouwen dat de checks niet hebben verdiend. En wat de auteur beweert is nooit bewijs - zegt een AI "ik heb de injectie opgelost", dan wordt dat vastgelegd als onbevestigde bewering.</p>
+</div></section>
+
+<section id="checks" class="tint"><div class="wrap">
+  <h2>Wat het controleert</h2>
+  <dl class="families">
+    <div><dt>Onderdrukkingen witwassen <span class="prov">mechanical</span></dt><dd><code>nosec</code>, <code>nosemgrep</code>, <code>noqa: S&hellip;</code>, <code>eslint-disable</code> op een beveiligingsregel, <code>usedforsecurity=False</code> en meer: <!--data:marker-kinds-->19<!--/data--> soorten, per soort geteld, alleen in echt commentaar.</dd></div>
+    <div><dt>Verzwakte analyzer-configuratie <span class="prov">mechanical</span></dt><dd>Nieuwe <code>skips</code> onder <code>[tool.bandit]</code>, beveiligingsregels genegeerd in ruff of flake8, nieuwe regels in <code>.semgrepignore</code>, ESLint-beveiligingsregels uitgezet.</dd></div>
+    <div><dt>Niet-aangesloten controles <span class="prov">parser</span></dt><dd><code>safe = sanitize(p)</code> wordt berekend, daarna wordt <code>open(p)</code> gebruikt. In JavaScript en TypeScript ook asynchrone controles zonder <code>await</code>.</dd></div>
+    <div><dt>Halve fixes via een gedeelde sink <span class="prov">parser</span></dt><dd>E&eacute;n aanroeper geparametriseerd, terwijl een samengestelde string via een wrapper nog steeds de rauwe sink bereikt.</dd></div>
+    <div><dt>Gevaarlijke sinks <span class="prov">parser</span></dt><dd>Nieuwe <code>shell=True</code>, <code>verify=False</code>, samengestelde SQL, <code>eval</code> op niet-literals, MD5 of SHA-1 over wachtwoorden, hardcoded sleutels. Bestaande blokkeren alleen als er een fix voor die klasse werd beweerd.</dd></div>
+    <div><dt>Weglatingen en lege wijzigingen <span class="prov">parser</span></dt><dd><code>// ... existing code ...</code>, "rest ongewijzigd", leeggemaakte functies, "fixes" die alleen commentaar raken, uitvoer die niet meer parset.</dd></div>
+  </dl>
+  <details class="catalogue" data-catalogue>
+    <summary>Alle <!--data:check-count-->38<!--/data--> checks, met wat elke check betekent</summary>
+    <div class="filters" data-filters hidden role="group" aria-label="Toon checks vastgesteld door">
+      <button type="button" aria-pressed="true" data-prov="">alle</button>
+      <button type="button" aria-pressed="false" data-prov="tool">tool</button>
+      <button type="button" aria-pressed="false" data-prov="parser">parser</button>
+      <button type="button" aria-pressed="false" data-prov="mechanical">mechanical</button>
+    </div>
+    <div class="tablewrap" tabindex="0"><table class="cat-table"><!--data:catalogue-table--><thead><tr><th>Check</th><th>Vastgesteld door</th><th>Geldt voor</th><th>Effect</th><th>Modus</th></tr></thead><tbody><tr data-prov="mechanical"><td><strong>Nieuwe analyzer-onderdrukking</strong> <code>suppression_introduced</code><p>Een onderdrukkingsmarker (nosec, NOSONAR, lgtm of codeql[...], nosemgrep, noqa: S..., eslint-disable op een beveiligingsregel, usedforsecurity=False, ...) komt vaker voor dan eerst. Geteld per soort, dus een al onderdrukte regel aanpassen wordt niet gemeld. In Python tellen commentaarmarkers alleen in echt commentaar, waar bandit 1.7.3+, Sonar en CodeQL ze lezen; een marker binnen een string, zoals nepfix-testdata, telt niet. bandit 1.7.0-1.7.2 volgde daar wel een marker, dus de analyser-extra vereist 1.7.3. noqa en nosemgrep tellen overal op de regel, omdat flake8 en semgrep de ruwe regel lezen. Een woord vast aan een marker (nosecure) telt, omdat bandit het als kale marker leest, en een marker die pas na decoderen met de opgegeven broncodering zichtbaar wordt ook. usedforsecurity op iets anders dan True telt. Een marker die naar code zonder marker is verhuisd, terwijl het aantal markers gelijk blijft, wordt ook gemeld (in Python per statement). Python die niet te tokenizen is, wordt als tekst geteld. Bij wijzigingscontrole blokkeren alleen markers die een beveiligingsanalyzer het zwijgen opleggen; een kale noqa telt daarbij op een statement met een aanroep die bandit meldt (subprocess, eval, yaml.load, md5, pickle, ...), usedforsecurity op wachtwoordmateriaal, en overige type- en stijlmarkers worden een waarschuwing. In JavaScript en TypeScript tellen ook blokcommentaren, telt een ESLint-directive zonder regellijst als beveiligingsonderdrukking waar hij een regel met een risicovolle aanroep dekt (eval, new Function, child_process, fs, innerHTML, ...), wordt een naar een andere regel verhuisde marker gemeld, en is een TypeScript-directive een waarschuwing.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Blokkeert</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Type-/stijlonderdrukking toegevoegd</strong> <code>suppression_added</code><p>Een onderdrukking voor type-checker of stijl (type: ignore, ts-ignore, pylint disable, ...) is toegevoegd in een wijziging. Niet blokkerend: dit is gewoon ontwikkelwerk, maar een blik waard.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Waarschuwt</td><td><code>diff</code></td></tr><tr data-prov="mechanical"><td><strong>Analyzer-config genoemd in uitvoer</strong> <code>analyser_config_touched</code><p>De voorgestelde uitvoer noemt een analyzer-configuratiebestand (.bandit, pyproject.toml, .semgrepignore, ...) dat de invoer niet noemde. Onderdrukking buiten het bestand is nog steeds onderdrukking.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Blokkeert</td><td><code>verify</code></td></tr><tr data-prov="mechanical"><td><strong>Beveiligingsanalyzer-config verzwakt</strong> <code>analyser_config_weakened</code><p>In een gewijzigd configbestand: nieuwe skips onder [tool.bandit], beveiligingsregels genegeerd in ruff/flake8 (S-regels, behalve S101 dat alleen waarschuwt), nieuwe .semgrepignore-/.gitleaksignore-regels, beveiligings-ESLint-regels uitgezet, Sonar-uitsluitingen, gosec uitgeschakeld. Commentaar en niet-gerelateerde sleutels tellen niet mee.</p></td><td><span class="prov">mechanical</span></td><td>Analyzer-configuratie</td><td>Blokkeert</td><td><code>diff</code></td></tr><tr data-prov="mechanical"><td><strong>Linter-config versoepeld</strong> <code>linter_config_relaxed</code><p>Een stijl- of type-linter is versoepeld in een configbestand. Geen beveiligingsanalyzer, dus alleen een waarschuwing.</p></td><td><span class="prov">mechanical</span></td><td>Analyzer-configuratie</td><td>Waarschuwt</td><td><code>diff</code></td></tr><tr data-prov="mechanical"><td><strong>Gewijzigd bestand kon niet worden gecontroleerd</strong> <code>content_not_checked</code><p>De nieuwe versie van een gewijzigd bestand in een taal die Saikou controleert, of van een configuratiebestand van een analyzer, kon niet worden gecontroleerd: er staat een NUL-byte in de eerste 8 KB (UTF-16 en UTF-32 met een byte-order mark worden als tekst gelezen), het is groter dan 1.000.000 bytes, het kon niet uit de werkmap worden gelezen, of het pad is nu een symbolische link of een submodule. De wijzigingscontrole blokkeert zo&#x27;n bestand in plaats van het over te slaan. Anders zou elke wijziging in dat bestand ongecontroleerd doorgaan, door één NUL-byte in commentaar, door opvulling tot voorbij de grens, of door een symbolische link die door een bestand wordt vervangen. Is alleen de oude versie onleesbaar, dan wordt de nieuwe gecontroleerd alsof het bestand nieuw is. Een bestand dat zo hoort te zijn, zoals een grote meegeleverde bundel, laat je weg met een pathspec (-- . &#x27;:(exclude)vendor/bundle.js&#x27;); --warn-only content_not_checked maakt de check voor elk bestand een waarschuwing. Bestanden in talen die Saikou niet controleert, worden nog steeds overgeslagen en vermeld.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Blokkeert</td><td><code>diff</code></td></tr><tr data-prov="mechanical"><td><strong>Marker voor weggelaten code</strong> <code>elided_output</code><p>De uitvoer bevat een zin als &#x27;rest unchanged&#x27;, &#x27;implementation here&#x27; of &#x27;// ... existing code ...&#x27;. Toepassen zou de weggelaten code verwijderen. Markers in stringliteralen en docstrings tellen niet. &#x27;keep the existing code&#x27; telt alleen als de zin daarmee eindigt of er &#x27;here&#x27;, &#x27;below&#x27;, &#x27;unchanged&#x27; of &#x27;as is&#x27; op volgt; in proza zoals &#x27;keep the existing code style&#x27; telt het niet. Bij wijzigingscontrole blokkeren alleen sterke markers.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Blokkeert</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Lijkt op weggelaten code</strong> <code>elision_phrase</code><p>Nieuwe tekst als &#x27;same as above&#x27; of &#x27;for brevity&#x27;. Meestal gewone tekst, dus alleen een waarschuwing.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Waarschuwt</td><td><code>diff</code></td></tr><tr data-prov="parser"><td><strong>Functiebody leeggemaakt</strong> <code>body_gutted</code><p>Een functie of klasse met statements bevat nu alleen &#x27;...&#x27; of &#x27;pass&#x27;. De implementatie is weggehaald. Een al bestaande kale &#x27;...&#x27; (Protocol-stub) is prima.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blokkeert</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Uitvoer bevat geen code</strong> <code>empty_output</code><p>De voorgestelde uitvoer is leeg. Bij wijzigingscontrole is een nieuw toegevoegd leeg bestand (zoals tests/__init__.py) gewoon en wordt het niet gemeld.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Blokkeert</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Uitvoer mogelijk afgekapt</strong> <code>truncated_output</code><p>De laatste regel eindigt midden in een expressie.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Waarschuwt</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Niet-gesloten haakjes</strong> <code>unbalanced_delimiters</code><p>Meer openende dan sluitende haakjes (een ruwe telling, dus stringliteralen kunnen ruis geven).</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Waarschuwt</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Uitvoer veel korter dan invoer</strong> <code>size_collapse</code><p>Een compleet bestand werd gevraagd maar de uitvoer heeft minder dan 60% van de niet-lege regels van de invoer.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Waarschuwt</td><td><code>verify</code></td></tr><tr data-prov="mechanical"><td><strong>Niets veranderd</strong> <code>no_change</code><p>De uitvoer is identiek aan de invoer, dus niets is gefixt. Alleen gecontroleerd wanneer een fix wordt beweerd; een gewone wijziging mag een bestand laten zoals het was.</p></td><td><span class="prov">mechanical</span></td><td>Elk bestand</td><td>Blokkeert</td><td><code>verify</code></td></tr><tr data-prov="parser"><td><strong>Alleen commentaar of witruimte veranderd</strong> <code>cosmetic_only_change</code><p>De syntaxboom is voor en na identiek: de wijziging was alleen commentaar, dus er veranderde geen uitvoerbaar gedrag.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blokkeert</td><td><code>verify</code></td></tr><tr data-prov="parser"><td><strong>Uitvoer parset niet meer</strong> <code>parse_failure</code><p>De invoer parsete als Python maar de uitvoer niet. Het kan niet worden geverifieerd en zou bij importeren breken.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blokkeert</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Geen van beide versies parset</strong> <code>parse_skipped</code><p>Beide versies parsen niet als Python (template, Python 2 of een fragment). AST-checks zijn overgeslagen; alleen tekstchecks draaiden.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Waarschuwt</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>shell=True</strong> <code>sink_shell_true</code><p>Een subprocess-aanroep loopt via een shell, waardoor ingevoegde tekst commando&#x27;s wordt. Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een waarschuwing die benoemt wat is blijven staan.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>TLS-controle uit</strong> <code>sink_tls_verify_off</code><p>verify=False schakelt de certificaatcontrole uit. Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een waarschuwing die benoemt wat is blijven staan.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>debug=True</strong> <code>sink_debug_true</code><p>Een webapp draait in debugmodus en toont een interactieve console. Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een waarschuwing die benoemt wat is blijven staan.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>eval/exec op een variabele</strong> <code>sink_dynamic_exec</code><p>eval() of exec() op iets dat geen literal is. Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een waarschuwing die benoemt wat is blijven staan.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>SQL door samenvoegen</strong> <code>sink_sql_interpolated</code><p>Een querystring wordt met f-string, % of + opgebouwd en aan execute() gegeven. Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een waarschuwing die benoemt wat is blijven staan.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>SQL zonder parameters</strong> <code>sink_sql_nonparameterised</code><p>execute() krijgt een berekende string zonder parameterargument. Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een waarschuwing die benoemt wat is blijven staan.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Zwakke hash over wachtwoord</strong> <code>sink_weak_hash_secret</code><p>MD5 of SHA-1 toegepast op wachtwoordachtige data. Gebruik een wachtwoord-KDF (scrypt, argon2, PBKDF2). Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een waarschuwing die benoemt wat is blijven staan.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Hardcoded sleutel, salt of geheim</strong> <code>hardcoded_secret_material</code><p>Een geheim-klinkende naam (password, api_key, secret_key, ...) krijgt een literal die op echt sleutelmateriaal lijkt. Labels, paden, namen van omgevingsvariabelen en gepunte identifiers worden niet gemeld. Blokkeert, behalve bij wijzigingscontrole van een testbestand (onder test/, tests/ of testing/, of test_*.py, *_test.py, conftest.py, tests.py): fixture-tokens zijn testdata, dus daar is het een waarschuwing, tenzij de waarde een herkenbare providersleutel is (AWS, GitHub, Slack, Stripe live, Google, OpenAI, Anthropic) of een private key. Absolute paden en paden met .. tellen nooit als testbestand. Een beweerde fix controleren blokkeert altijd.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Validatie berekend maar nooit gebruikt</strong> <code>guard_computed_but_unused</code><p>Een waarde uit een validatie-/opschoonaanroep (sanitize_*, validate_*, os.path.basename, realpath, ...) wordt nooit gelezen, dus de ongezuiverde waarde bereikt nog steeds de sink. Blokkeert als het nieuw is of als een fix werd beweerd; anders een waarschuwing.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Samengestelde string bereikt ruwe sink via een wrapper</strong> <code>shared_sink_injection_path</code><p>Een hulpfunctie geeft zijn argument door aan een ruwe sink en een aanroeper geeft er een samengestelde string aan. Andere aanroepers parametriseren sluit dit pad niet; de sink zelf moet gerepareerd worden.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Validatie berekend maar nooit gebruikt (JS/TS)</strong> <code>js_guard_computed_but_unused</code><p>const safe = sanitize(x) komt één keer in het bestand voor en wordt nooit meer gebruikt. Structurele check (geen parser). Een ternary op een guard wordt niet gemeld.</p></td><td><span class="prov">mechanical</span></td><td>JavaScript, TypeScript</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Async guard zonder await</strong> <code>js_async_guard_in_boolean</code><p>Een functie die in dit bestand async is gedefinieerd wordt zonder await als voorwaarde gebruikt. Een Promise is altijd truthy, dus de guard weigert nooit.</p></td><td><span class="prov">mechanical</span></td><td>JavaScript, TypeScript</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Async guard blijft zweven</strong> <code>js_floating_guard_promise</code><p>assertAllowed(x).catch(log): de code gaat door voordat de guard klaar is.</p></td><td><span class="prov">mechanical</span></td><td>JavaScript, TypeScript</td><td>Hangt af (zie tekst)</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Geminificeerd of gebundeld bestand overgeslagen</strong> <code>js_generated_skipped</code><p>Structurele guard-checks gaan uit van door mensen geschreven, regelgebaseerde code, dus gegenereerde bestanden worden overgeslagen met deze waarschuwing. Harden de bron, niet de build-uitvoer.</p></td><td><span class="prov">mechanical</span></td><td>JavaScript, TypeScript</td><td>Waarschuwt</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Publieke API gebroken</strong> <code>api_break</code><p>Met strikte API aan: publieke symbolen verwijderd, of een signatuur gewijzigd zodat een oude aanroep niet meer werkt. Een optionele parameter toevoegen is compatibel en wordt niet gemeld.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blokkeert</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Beschermd symbool gewijzigd</strong> <code>must_preserve_violated</code><p>Een symbool dat je als te-behouden markeerde is verwijderd of gewijzigd.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blokkeert</td><td><code>verify, diff</code></td></tr><tr data-prov="tool"><td><strong>Analyzer-bevindingen verborgen, niet gefixt</strong> <code>findings_suppressed_not_fixed</code><p>bandit draait twee keer, normaal en met --ignore-nosec. Bevindingen die alleen in de onderdrukkings-blinde run zichtbaar zijn, zijn het zwijgen opgelegd en tellen nooit als gefixt. Vereist geïnstalleerde bandit.</p></td><td><span class="prov">tool</span></td><td>Python</td><td>Blokkeert</td><td><code>verify, diff</code></td></tr><tr data-prov="tool"><td><strong>Nieuwe analyzer-bevindingen</strong> <code>new_analyser_findings</code><p>bandit meldt bevindingen die er voor de wijziging niet waren.</p></td><td><span class="prov">tool</span></td><td>Python</td><td>Waarschuwt</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Model meldde niets onopgelost</strong> <code>empty_deferred_list</code><p>Bij niet-triviale invoer is een lege lijst van onopgeloste punten meestal een rapportagefout.</p></td><td><span class="prov">mechanical</span></td><td>Resultaten van saikou harden</td><td>Waarschuwt</td><td><code>verify</code></td></tr><tr data-prov="mechanical"><td><strong>Beweerde fixes die de analyzer niet bevestigt</strong> <code>unsupported_fix_claims</code><p>Het model beweert fixes maar de analyzer bevestigt nul verdwenen bevindingen. Behandel de beweringen als onbevestigd.</p></td><td><span class="prov">mechanical</span></td><td>Resultaten van saikou harden</td><td>Waarschuwt</td><td><code>verify</code></td></tr><tr data-prov="mechanical"><td><strong>Analyzer-bevindingen die niet in de invoer zaten</strong> <code>new_findings</code><p>De geharde uitvoer heeft analyzer-bevindingen die het origineel niet had.</p></td><td><span class="prov">mechanical</span></td><td>Resultaten van saikou harden</td><td>Waarschuwt</td><td><code>verify</code></td></tr></tbody><!--/data--></table></div>
+  </details>
+</div></section>
+
+<section id="geverifieerd"><div class="wrap">
+  <h2>Getoetst aan de echte tools</h2>
+  <p class="narrow-p">De onderdrukkingscheck is de check waar een AI-agent het makkelijkst over struikelt, dus hij wordt gehouden aan de antwoorden van de tools wier markers hij beoordeelt. Voor Python gingen <!--data:py-total-->1.697<!--/data--> gegenereerde voor/na-paren naar <!--data:py-executed-->bandit 1.9.4, ruff 0.17.1 en semgrep 1.181.0<!--/data--> (uitgevoerd), en naar <!--data:py-patterns-->flake8 7.4.1, sonar-python en CodeQL<!--/data--> (hun gepubliceerde markerpatronen). In <!--data:py-honoured-->879<!--/data--> paren respecteert een tool de nieuwe marker: Saikou blokkeert er <!--data:py-blocks-->873<!--/data-->, waarschuwt bij <!--data:py-warns-->6<!--/data--> en laat er <!--data:py-missed-->0<!--/data--> ongemeld. Voor JavaScript en TypeScript gingen <!--data:js-total-->761<!--/data--> paren naar <!--data:js-executed-->ESLint v9.39.5, TypeScript 5.9.3 en semgrep 1.181.0<!--/data-->: van <!--data:js-honoured-->186<!--/data--> gerespecteerde markers blokkeert Saikou er <!--data:js-blocks-->174<!--/data--> en waarschuwt het bij <!--data:js-warns-->12<!--/data--> (directives voor de typechecker), <!--data:js-missed-->0<!--/data--> ongemeld.</p>
+  <div class="chart-switch" data-switch hidden role="group" aria-label="Taal">
+    <button type="button" aria-pressed="true" data-show="python">Python</button>
+    <button type="button" aria-pressed="false" data-show="js">JavaScript, TypeScript</button>
+  </div>
+  <div class="chart" data-coverage-chart aria-hidden="true"></div>
+  <p class="waffle-key" data-chart-key hidden><span class="sw sw-block"></span> Saikou blokkeert <span class="sw sw-new"></span> Saikou waarschuwt <span class="sw sw-false"></span> niet gemeld</p>
+  <div class="cov-tables">
+    <div class="cov" data-cov="python"><h3>Python: paren per referentietool</h3>
+      <div class="tablewrap" tabindex="0"><table><!--data:py-table--><thead><tr><th>Referentietool</th><th>Respecteert de nieuwe marker</th><th>Saikou blokkeert</th><th>Saikou waarschuwt</th><th>Niet gemeld</th></tr></thead><tbody><tr><td>bandit</td><td class="num">355</td><td class="num">349</td><td class="num">6</td><td class="num">0</td></tr><tr><td>flake8</td><td class="num">158</td><td class="num">158</td><td class="num">0</td><td class="num">0</td></tr><tr><td>ruff</td><td class="num">153</td><td class="num">148</td><td class="num">5</td><td class="num">0</td></tr><tr><td>sonar-python</td><td class="num">302</td><td class="num">302</td><td class="num">0</td><td class="num">0</td></tr><tr><td>CodeQL</td><td class="num">184</td><td class="num">184</td><td class="num">0</td><td class="num">0</td></tr><tr><td>semgrep</td><td class="num">74</td><td class="num">74</td><td class="num">0</td><td class="num">0</td></tr></tbody><!--/data--></table></div></div>
+    <div class="cov" data-cov="js"><h3>JavaScript en TypeScript: paren per referentietool</h3>
+      <div class="tablewrap" tabindex="0"><table><!--data:js-table--><thead><tr><th>Referentietool</th><th>Respecteert de nieuwe marker</th><th>Saikou blokkeert</th><th>Saikou waarschuwt</th><th>Niet gemeld</th></tr></thead><tbody><tr><td>ESLint</td><td class="num">110</td><td class="num">110</td><td class="num">0</td><td class="num">0</td></tr><tr><td>TypeScript</td><td class="num">12</td><td class="num">0</td><td class="num">12</td><td class="num">0</td></tr><tr><td>semgrep</td><td class="num">64</td><td class="num">64</td><td class="num">0</td><td class="num">0</td></tr></tbody><!--/data--></table></div></div>
+  </div>
+  <p class="narrow-p">Waar geen tool de marker respecteert, blokkeert Saikou toch als hij eruitziet als een beveiligingsonderdrukking (<!--data:py-over-->585<!--/data--> Python-paren, <!--data:js-over-->105<!--/data--> paren in JavaScript en TypeScript): op een andere regel, voor een andere regel, of in een bestand dat de tools niet kunnen lezen. De testsuite controleert elk oordeel bij elke run opnieuw, en een wekelijkse taak vraagt het de tools opnieuw en faalt als een antwoord verandert.</p>
+  <p class="narrow-p">Dit is een verklaring met een bereik, geen belofte. Niet gedekt: andere talen, andere versies van deze tools, markervormen die niet bij de paren zitten. De volledige <a href="https://github.com/SuperfastSimon/saikou/blob/main/docs/conformance/suppression-coverage.nl.md">dekkingsverklaring</a> wordt uit dezelfde testgegevens gegenereerd.</p>
+</div></section>
+
+<section id="gemeten" class="tint"><div class="wrap">
+  <h2>Gemeten op code die niemand hiervoor schreef</h2>
+  <p class="narrow-p">Een check die echte code ten onrechte blokkeert, is ook een fout. <!--data:measured-files-->2.824<!--/data--> echte bestanden kregen elk een onschuldige wijziging (een triviale nieuwe functie) en gingen door de modus <code>diff</code>: er werden er <!--data:measured-false-->0<!--/data--> geblokkeerd. Behandel dezelfde bestanden als nieuwe code, en dan worden er wel enkele geblokkeerd: ze bevatten een echte <code>eval</code>, <code>exec</code> of <code>shell=True</code>, en nieuwe code hoort die te verantwoorden.</p>
+  <div class="chart-switch" data-waffle-switch hidden role="group" aria-label="Meting">
+    <button type="button" aria-pressed="true" data-show="edit">Onschuldige wijziging</button>
+    <button type="button" aria-pressed="false" data-show="new">Zelfde bestanden als nieuwe code</button>
+  </div>
+  <div class="waffles" data-waffles aria-hidden="true"></div>
+  <p class="waffle-key" data-waffle-key hidden><span class="sw sw-ok"></span> bestand niet geblokkeerd <span class="sw sw-new"></span> geblokkeerd als nieuwe code <span class="sw sw-false"></span> onschuldige wijziging geblokkeerd</p>
+  <div class="tablewrap" tabindex="0"><table><!--data:measured-table--><thead><tr><th>Corpus</th><th>Bestanden</th><th>Onschuldige wijziging geblokkeerd</th><th>Zelfde bestanden als nieuwe code, geblokkeerd</th></tr></thead><tbody><tr><td>CPython 3.11-standaardbibliotheek</td><td class="num">600</td><td class="num">0</td><td class="num">33</td></tr><tr><td>flask, fastapi, starlette, aiohttp, requests, pydantic, httpx, jinja2, werkzeug</td><td class="num">380</td><td class="num">0</td><td class="num">8</td></tr><tr><td>JavaScript (express en zijn afhankelijkheden)</td><td class="num">826</td><td class="num">0</td><td class="num">2</td></tr><tr><td>TypeScript (vooral declaratiebestanden)</td><td class="num">1.018</td><td class="num">0</td><td class="num">0</td></tr></tbody><!--/data--></table></div>
+  <p class="narrow-p">Elke onterechte blokkade die bij het meten opdook, is vastgelegd als regressietest, in de zelftest van de engine (<!--data:selftest-checks-->123<!--/data--> checks, geen netwerk, geen sleutel: <code>saikou selftest</code>) of in de testsuite. Methode: <code>scripts/fp_corpus.py</code>; ruwe resultaten: <code>docs/measurements/</code>.</p>
+</div></section>
+
+<section id="gebruik"><div class="wrap">
+  <h2>Gebruik</h2>
+  <ol class="quick">
+    <li><span class="step">Installeren</span><pre tabindex="0" class="term">pip install saikou</pre><p>Python 3.9 of nieuwer. De engine gebruikt alleen de standaardbibliotheek.</p></li>
+    <li><span class="step">Een beweerde fix controleren</span><pre tabindex="0" class="term">saikou verify before.py after.py --claimed-threats injection</pre><p>Streng: wat de fix zegt te repareren, moet gerepareerd zijn.</p></li>
+    <li><span class="step">Een pull request poorten</span><pre tabindex="0" class="term">saikou diff --base origin/main</pre><p>Controleert elk gewijzigd bestand en blokkeert alleen wat de wijziging introduceerde. Uitvoer als tekst, JSON of SARIF.</p></li>
+  </ol>
+  <h3>Waar het verder draait</h3>
+  <dl class="ruled">
+    <div><dt>GitHub Action</dt><dd><pre tabindex="0" class="term">- uses: SuperfastSimon/saikou@v1
+  with:
+    only-agent-prs: "true"</pre><p>Bevindingen verschijnen in code scanning en in de samenvatting van de job. <code>only-agent-prs</code> controleert alleen pull requests van bots of AI-agents.</p></dd></div>
+    <div><dt>pre-commit</dt><dd><pre tabindex="0" class="term">repos:
+  - repo: https://github.com/SuperfastSimon/saikou
+    rev: v<!--data:version-->1.2.0<!--/data-->
+    hooks:
+      - id: saikou</pre></dd></div>
+    <div><dt>Claude Code-plugin</dt><dd><pre tabindex="0" class="term">/plugin marketplace add SuperfastSimon/saikou
+/plugin install saikou-harden@saikou</pre><p>De agent <code>code-hardener</code> vraagt naar je dreigingsmodel, hardt, controleert zijn eigen uitvoer met Saikou en schrijft pas na jouw akkoord op de diff.</p></dd></div>
+    <div><dt>Je eigen model</dt><dd><pre tabindex="0" class="term">export LLM_API_KEY=...
+saikou harden app.py --threat injection</pre><p>Elk OpenAI-compatibel endpoint, ook een lokaal. Standaard een proefrun; <code>--write</code> past alleen een resultaat toe dat de controle doorstond. Je code gaat naar de aanbieder die jij kiest, onder diens voorwaarden.</p></dd></div>
+    <div><dt>Als bibliotheek</dt><dd><pre tabindex="0" class="term">from saikou import scan_transformation
+findings = scan_transformation(before, after, language="python")</pre></dd></div>
+    <div><dt>In je browser</dt><dd><p>De <a href="werkbank.html">werkbank</a> draait een deel van de checks in JavaScript op die pagina; er wordt niets verstuurd.</p></dd></div>
+  </dl>
+</div></section>
+
+<section id="prijzen" class="tint"><div class="wrap">
+  <h2>Gratis en betaald</h2>
+  <p class="narrow-p">Alles hierboven is gratis en open source onder Apache-2.0, nu en later. Betaalde abonnementen zijn gepland voor teams die aan auditors moeten <em>laten zien</em> dat fixes onafhankelijk zijn gecontroleerd. Ze zijn <strong>nog niet te koop</strong>.</p>
+  <div class="tablewrap" tabindex="0"><table class="plans">
+    <thead><tr><th>Abonnement</th><th>Prijs</th><th>Wat het toevoegt</th></tr></thead>
+    <tbody>
+      <tr><td>Open source</td><td class="num">Gratis</td><td>Engine, CLI, GitHub Action, pre-commit-hook, Claude Code-plugin, werkbank in de browser.</td></tr>
+      <tr><td>Pro (gepland)</td><td class="num">ongeveer &euro;19 / org / maand</td><td>Ondertekende export van het bewijslogboek, gekoppeld aan NIS2 art. 21(2)(e) en ISO 27001 A.8.25&ndash;8.28, plus een beleidsbestand voor je organisatie (te behouden symbolen, strengere regels, allowlists).</td></tr>
+      <tr><td>Team (gepland)</td><td class="num">ongeveer &euro;49 / org / maand</td><td>Alles uit Pro, plus een vaste opmerking in de pull request en een trendrapport van gecontroleerde fixes door de tijd.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Geplande prijzen, onder voorbehoud. Interesse? <a href="mailto:ceo@saikou.tech?subject=Saikou%20Pro%20wachtlijst">Laat weten wat je nodig hebt</a> - ik lees elk bericht.</p>
+</div></section>
+
+<section id="vragen"><div class="wrap narrow">
+  <h2>Vragen</h2>
+  <details class="faq"><summary>Is Saikou een kwetsbaarhedenscanner?</summary>
+    <p>Nee. Het beoordeelt <em>wijzigingen</em>: het vergelijkt de code v&oacute;&oacute;r en na een fix en vraagt of de fix het ding veranderde waar het om ging. Houd je statische analyzer; Saikou controleert of fixes voor zijn bevindingen echt zijn.</p></details>
+  <details class="faq"><summary>Betekent "komt erdoor" dat mijn code veilig is?</summary>
+    <p>Nee. Het betekent dat geen enkele check de wijziging blokkeerde. Saikou meldt wat het controleerde en hoe, en het certificeert niets. De <a href="#grenzen">grenzen</a> zeggen waar het niet naar kijkt.</p></details>
+  <details class="faq"><summary>Wat is het verschil met een AI-tool die automatisch fixt?</summary>
+    <p>Zo'n tool schrijft een fix. Saikou beoordeelt een fix, wie of wat hem ook schreef, en behandelt de beschrijving van de auteur als een onbevestigde bewering. Ze werken samen: laat de agent fixen, laat Saikou het resultaat controleren voordat het wordt gemerged.</p></details>
+  <details class="faq"><summary>Welke talen controleert het?</summary>
+    <p>Python wordt aan beide kanten geparsed (<code>ast_verified</code>); met <code>--analyser</code> en bandit ge&iuml;nstalleerd (<code>pip install "saikou[analyser]"</code>) draait bandit mee, als extra bewijs. JavaScript en TypeScript krijgen structurele controles en de onderdrukkingschecks die getoetst zijn aan ESLint, de TypeScript-compiler en semgrep. Go, Java, C#, PHP, Ruby, Rust, C en C++, Kotlin, Swift, shell en SQL krijgen tekstuele checks (<code>structural</code>). Al het andere alleen basiscontroles (<code>asserted</code>). Elk rapport noemt het niveau per bestand.</p></details>
+  <details class="faq"><summary>Verlaat mijn code mijn machine?</summary>
+    <p><code>verify</code>, <code>diff</code> en de werkbank in de browser draaien lokaal en versturen niets. Alleen <code>saikou harden</code> stuurt code, naar de modelaanbieder die jij instelt, onder de voorwaarden van die aanbieder.</p></details>
+  <details class="faq"><summary>Waarom is er geen score?</summary>
+    <p>Een getal wekt vertrouwen dat de checks niet hebben verdiend, en het verbergt welke check wat zei. Je krijgt bevindingen, elk met hoe ze is vastgesteld, en een oordeel per bestand.</p></details>
+  <details class="faq"><summary>Kan het een pull request tegenhouden?</summary>
+    <p>Ja. <code>saikou diff</code> eindigt met 1 bij een hard fail, dus elke CI kan erop poorten; de GitHub Action doet dat voor je en kan zich beperken tot pull requests van bots of AI-agents.</p></details>
+  <details class="faq"><summary>Wat kost het?</summary>
+    <p>Niets. De engine en elke koppeling zijn open source onder Apache-2.0. Betaalde abonnementen voor auditbewijs zijn gepland en <a href="#prijzen">nog niet te koop</a>.</p></details>
+</div></section>
+
+<section id="grenzen" class="tint"><div class="wrap narrow">
+  <h2>Wat Saikou niet doet</h2>
+  <ul class="limits">
+    <li><strong>Het certificeert niets.</strong> Het meldt wat het controleerde en hoe - nooit dat code veilig is.</li>
+    <li><strong>Het voert je code niet uit.</strong> Gedrag wordt structureel gecontroleerd (syntaxboom, API-oppervlak) voor Python, en voor andere talen helemaal niet.</li>
+    <li><strong>Het is geen kwetsbaarhedenscanner.</strong> Het beoordeelt <em>wijzigingen</em>. Houd je SAST; Saikou controleert of fixes voor zijn bevindingen echt zijn.</li>
+    <li><strong>Analyzer-bewijs is er alleen voor Python</strong> (bandit). Andere talen krijgen structurele checks, en elk rapport zegt dat.</li>
+    <li><strong>E&eacute;n bestand tegelijk.</strong> <code>diff</code> controleert elk gewijzigd bestand, maar er is geen data-flow-analyse over bestanden heen.</li>
+  </ul>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>&copy; 2026 Saikou. Open source onder Apache-2.0.</span>
+  <span><a href="../legal.html#nl">Juridisch &amp; privacy</a> &middot; <a href="https://github.com/SuperfastSimon/saikou">GitHub</a> &middot; <a href="mailto:ceo@saikou.tech">Contact</a></span>
+  <span>Deze site laadt geen scripts, lettertypen of trackers van derden.</span>
+</div></footer>
+</body>
+</html>

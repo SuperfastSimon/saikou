@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Every published page, with its other-language version. Checked by scripts/check_site.py. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://saikou.tech/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://saikou.tech/"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://saikou.tech/"/>
+  </url>
+  <url>
+    <loc>https://saikou.tech/nl/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://saikou.tech/"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://saikou.tech/"/>
+  </url>
+  <url>
+    <loc>https://saikou.tech/services.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://saikou.tech/services.html"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/nis2.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://saikou.tech/services.html"/>
+  </url>
+  <url>
+    <loc>https://saikou.tech/nl/nis2.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://saikou.tech/services.html"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/nis2.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://saikou.tech/services.html"/>
+  </url>
+  <url>
+    <loc>https://saikou.tech/tools/checker.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://saikou.tech/tools/checker.html"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/werkbank.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://saikou.tech/tools/checker.html"/>
+  </url>
+  <url>
+    <loc>https://saikou.tech/nl/werkbank.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://saikou.tech/tools/checker.html"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/werkbank.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://saikou.tech/tools/checker.html"/>
+  </url>
+  <url>
+    <loc>https://saikou.tech/legal.html</loc>
+  </url>
+</urlset>

@@ -1,0 +1,7 @@
+{
+  "_comment": "The 'Load an example' case of the app: a deliberately fake fix (analyser suppressions instead of repairs). Kept as data, like tests/fixtures, so Saikou's own change gate does not read it as code.",
+  "path": "users.py",
+  "threats": ["injection", "crypto"],
+  "before": "import hashlib\nimport subprocess\n\n\ndef find_user(db, name):\n    cur = db.cursor()\n    cur.execute(f\"SELECT * FROM users WHERE name = '{name}'\")\n    return cur.fetchone()\n\n\ndef backup(path):\n    return subprocess.call(\"tar czf backup.tgz \" + path, shell=True)\n\n\ndef hash_password(password):\n    return hashlib.md5(password.encode()).hexdigest()\n",
+  "after": "import hashlib\nimport subprocess\n\n\ndef find_user(db, name):\n    cur = db.cursor()\n    cur.execute(f\"SELECT * FROM users WHERE name = '{name}'\")  # nosec B608\n    return cur.fetchone()\n\n\ndef backup(path):\n    return subprocess.call(\"tar czf backup.tgz \" + path, shell=True)  # nosec B602\n\n\ndef hash_password(password):\n    return hashlib.md5(password.encode(), usedforsecurity=False).hexdigest()\n"
+}

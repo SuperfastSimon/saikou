@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify AI-written security fixes before you merge - Saikou</title>
+<meta name="description" content="Open-source check for AI-written security fixes. It blocks fixes that only look fixed: a new nosec, an unused sanitiser, a partial fix. Runs locally, no score.">
+<meta name="theme-color" content="#07080a">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/home.css">
+<link rel="icon" href="Saikou.tech-favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://saikou.tech/">
+<link rel="alternate" hreflang="en" href="https://saikou.tech/">
+<link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/">
+<link rel="alternate" hreflang="x-default" href="https://saikou.tech/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Saikou">
+<meta property="og:title" content="Verify AI-written security fixes before you merge - Saikou">
+<meta property="og:description" content="Open-source check for AI-written security fixes. It blocks fixes that only look fixed: a new nosec, an unused sanitiser, a partial fix. Runs locally, no score.">
+<meta property="og:url" content="https://saikou.tech/">
+<meta property="og:locale" content="en_GB">
+<meta property="og:locale:alternate" content="nl_NL">
+<meta property="og:image" content="https://saikou.tech/assets/og-en.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A one-line AI fix that only adds a nosec comment to a shell=True call, stamped Blocked by Saikou.">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Saikou",
+ "url": "https://saikou.tech/", "inLanguage": "en",
+ "description": "Open-source verifier for AI-written security fixes: it compares code before and after a claimed fix and blocks changes that only look fixed, such as new analyser suppressions, unused sanitisers, partial fixes and elided code. No score.",
+ "applicationCategory": "DeveloperApplication", "operatingSystem": "Windows, macOS, Linux",
+ "softwareVersion": "1.2.0", "license": "https://www.apache.org/licenses/LICENSE-2.0",
+ "offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR"}}
+</script>
+<script src="assets/site-data.js" defer></script>
+<script src="assets/home.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head"><div class="wrap">
+  <a class="brand" href="index.html"><img src="Saikou.tech-logo-flat-hor.svg" alt="Saikou" width="94" height="26"></a>
+  <nav class="nav" aria-label="Main">
+    <a href="#demo">Demo</a><a href="#read">Read a report</a><a href="#verified">Evidence</a><a href="#use">Use it</a><a href="#faq">FAQ</a>
+    <a href="tools/checker.html">Try in browser</a><a href="services.html">Services &amp; NIS2</a>
+    <a class="lang" href="nl/index.html" hreflang="nl" lang="nl">NL</a>
+  </nav>
+</div></header>
+<div class="lang-hint" data-lang-hint="nl" lang="nl" hidden><div class="wrap">
+  <p>Deze pagina is er ook in het Nederlands. <a href="nl/index.html" hreflang="nl">Lees de Nederlandse versie</a></p>
+  <button type="button" aria-label="Melding sluiten">Sluiten</button>
+</div></div>
+
+<main id="main">
+<div class="wrap hero hero-split">
+  <div>
+    <h1>Verify <span class="nowrap">AI-written</span> security fixes before you merge them.</h1>
+    <p class="lede">An agent opens a pull request: "fixed the injection". The scanner agrees, because the agent added a <code>nosec</code>. Saikou compares the code before and after and blocks the fixes that only <em>look</em> fixed: a new suppression, a sanitised value nobody uses, one caller fixed while the shared sink stays raw, code replaced by <code>// ... existing code ...</code>.</p>
+    <div class="cta">
+      <a class="btn" href="#use">Get started</a>
+      <a class="btn ghost" href="tools/checker.html">Try it in your browser</a>
+    </div>
+    <p class="meta">v<!--data:version-->1.2.0<!--/data--> &middot; Python 3.9+ &middot; standard library only &middot; runs on your machine &middot; Apache-2.0 &middot; no score</p>
+  </div>
+  <figure class="proof">
+    <figcaption>One line of an AI "fix", from the demo below (<code><!--data:hero-file-->after_A_fake.py<!--/data--></code>):</figcaption>
+    <pre tabindex="0" class="term fail"><!--data:hero-diff--><span class="pl del">- return subprocess.call(&quot;ping -c1 &quot; + host, shell=True)</span>
+<span class="pl add">+ return subprocess.call(&quot;ping -c1 &quot; + host, shell=True)  # nosec B602</span><!--/data--></pre>
+    <p class="proof-verdict"><span class="stamp fail">Blocked</span></p>
+    <ul class="proof-findings"><!--data:hero-findings--><li><code>sink_shell_true</code> <span class="prov">parser</span></li><li><code>suppression_introduced</code> <span class="prov">mechanical</span></li><!--/data--></ul>
+  </figure>
+</div>
+
+<section id="problem"><div class="wrap">
+  <h2>Why a clean scan is not proof</h2>
+  <p class="narrow-p">Static analysers honour suppression comments. So the cheapest way to make a finding disappear is to silence it, and a before/after comparison of findings then reports an improvement. Four steps, one of them a lie:</p>
+  <ol class="flow">
+    <li><span class="step">The finding</span><code>shell=True</code><p>The scanner reports a command-injection risk.</p></li>
+    <li><span class="step">The "fix"</span><code>+ # nosec B602</code><p>The agent adds a suppression and changes nothing else.</p></li>
+    <li><span class="step">The scan after</span><code>findings: 1 &rarr; 0</code><p>The scanner skips the line, and the delta reads as a fix.</p></li>
+    <li class="flow-end"><span class="step">Saikou</span><code>BLOCKED</code><p>It compares the code itself: the sink is unchanged and a suppression appeared.</p></li>
+  </ol>
+  <p class="rule">Absence of a finding is never evidence of a fix.</p>
+</div></section>
+
+<section id="demo" class="tint"><div class="wrap">
+  <h2>See it work</h2>
+  <p class="narrow-p">One vulnerable file (SQL built by string formatting, <code>shell=True</code>, MD5 for passwords, path traversal) and three proposed fixes. The diffs, findings and output below are produced by the real command, and the test suite fails when they no longer match it; the files are in <code>tests/fixtures/demo/</code>. Pick a finding to see the line it points at.</p>
+  <div class="explorer" data-explorer data-label="Three proposed fixes">
+    <article class="panel" id="case-fake" data-case="fake">
+      <h3><span class="verdict fail">Blocked</span> The fake fix</h3>
+      <p>Adds <code>nosec</code> comments and <code>usedforsecurity=False</code>. Nothing is repaired.</p>
+      <div class="case-view" data-view hidden></div>
+      <details class="raw" open><summary>Output of <code>saikou verify</code></summary>
+<pre tabindex="0" class="term fail"><!--demo:A_fake-->BLOCKED after_A_fake.py  [python · ast_verified · verify]
+HARD FAIL [mechanical] suppression_introduced L7: A bandit analyser suppression appears in the
+              output that was not in the input (+2). Silencing an analyser is not hardening, and
+              it would make a before/after finding delta read as an improvement.
+HARD FAIL [parser] sink_sql_nonparameterised L7: A fix for &#x27;injection&#x27; was claimed but this sink
+              survives unchanged: execute() receives a computed string with no parameter
+              argument; the SQL injection sink is intact.
+HARD FAIL [parser] shared_sink_injection_path L11: Survives a claimed injection fix unchanged:
+              run_query() forwards its argument into a raw sink, and here it is called with an
+              interpolated string. Parameterising other callers does not close this path; the
+              sink itself must be fixed.
+HARD FAIL [mechanical] suppression_introduced L14: A bandit analyser suppression appears in the
+              output that was not in the input (+2). Silencing an analyser is not hardening, and
+              it would make a before/after finding delta read as an improvement.
+HARD FAIL [parser] sink_shell_true L14: A fix for &#x27;injection&#x27; was claimed but this sink survives
+              unchanged: shell=True survives in the output; command injection sink intact.
+HARD FAIL [mechanical] suppression_introduced L17: A usedforsecurity-flag analyser suppression
+              appears in the output that was not in the input (+1). Silencing an analyser is not
+              hardening, and it would make a before/after finding delta read as an improvement.
+
+saikou verify: 1 file(s), 1 blocked, 6 hard fail(s), 0 warning(s).<!--/demo--></pre></details>
+    </article>
+    <article class="panel" id="case-partial" data-case="partial">
+      <h3><span class="verdict fail">Blocked</span> The partial fix</h3>
+      <p>Fixes the shell call and the hash, computes a "safe" path it never uses, and leaves SQL injection reachable through a wrapper.</p>
+      <div class="case-view" data-view hidden></div>
+      <details class="raw" open><summary>Output of <code>saikou verify</code></summary>
+<pre tabindex="0" class="term fail"><!--demo:B_partial-->BLOCKED after_B_partial.py  [python · ast_verified · verify]
+HARD FAIL [parser] sink_sql_nonparameterised L7: A fix for &#x27;injection&#x27; was claimed but this sink
+              survives unchanged: execute() receives a computed string with no parameter
+              argument; the SQL injection sink is intact.
+HARD FAIL [parser] shared_sink_injection_path L11: Survives a claimed injection fix unchanged:
+              run_query() forwards its argument into a raw sink, and here it is called with an
+              interpolated string. Parameterising other callers does not close this path; the
+              sink itself must be fixed.
+HARD FAIL [parser] guard_computed_but_unused L20: &#x27;safe&#x27; is produced by a
+              validation/sanitisation call and then never read. The guard is decorative: the
+              unsanitised value still reaches the sink.
+
+saikou verify: 1 file(s), 1 blocked, 3 hard fail(s), 0 warning(s).<!--/demo--></pre></details>
+    </article>
+    <article class="panel" id="case-real" data-case="real">
+      <h3><span class="verdict pass">Passes</span> The real fix</h3>
+      <p>Parameterised queries, an argument list instead of a shell, scrypt with a salt, resolved-path containment.</p>
+      <div class="case-view" data-view hidden></div>
+      <details class="raw" open><summary>Output of <code>saikou verify</code></summary>
+<pre tabindex="0" class="term pass"><!--demo:C_real-->ok      after_C_real.py  [python · ast_verified · verify]
+
+saikou verify: 1 file(s), 0 blocked, 0 hard fail(s), 0 warning(s).<!--/demo--></pre></details>
+    </article>
+  </div>
+  <p class="note">"Passes" means no check blocked the change - not that the code is secure. See <a href="#limits">what Saikou does not do</a>.</p>
+</div></section>
+
+<section id="read"><div class="wrap">
+  <h2>How to read a report</h2>
+  <p class="narrow-p">Every finding is one line. This one is from the fake fix above:</p>
+  <pre tabindex="0" class="term anatomy"><!--data:anatomy--><span class="a a-sev">HARD FAIL</span> <span class="a a-prov">[parser]</span> <span class="a a-check">sink_shell_true</span> <span class="a a-line">L14</span>: <span class="a a-detail">A fix for &#x27;injection&#x27; was claimed but this sink survives unchanged: shell=True survives in the output; command injection sink intact.</span><!--/data--></pre>
+  <dl class="legend">
+    <div><dt><span class="a-key a-sev"><!--data:anat-sev-->HARD FAIL<!--/data--></span> severity</dt><dd>A hard fail blocks the file. <code>WARN</code> is reported and does not block: something to look at, such as a type-checker directive. A file with at least one hard fail is <code>BLOCKED</code>, and the command exits with 1 (0 = no hard fail, 2 = error), so CI can gate on it.</dd></div>
+    <div><dt><span class="a-key a-prov"><!--data:anat-prov-->[parser]<!--/data--></span> how it was established</dt><dd><span class="prov">tool</span> <!--data:prov-tool-->An external analyser (bandit) produced this, run twice: normally and with suppressions ignored.<!--/data--><br><span class="prov">parser</span> <!--data:prov-parser-->Computed by parsing both versions into syntax trees and comparing them. Not a text guess.<!--/data--><br><span class="prov">mechanical</span> <!--data:prov-mechanical-->A deterministic text or counting check. Reliable for what it looks for, blind to meaning.<!--/data--></dd></div>
+    <div><dt><span class="a-key a-check"><!--data:anat-check-->sink_shell_true<!--/data--></span> the check, and <span class="a-key a-line"><!--data:anat-line-->L14<!--/data--></span> the line</dt><dd>Every check has an id and a plain description; the full list is below. The line number points into the file after the change.</dd></div>
+    <div><dt>Verification tier, per file</dt><dd><code>ast_verified</code> <!--data:tier-ast-verified-->Python: both versions parsed; API surface and sinks computed, not claimed.<!--/data--><br><code>structural</code> <!--data:tier-structural-->No parser: textual and structural checks only. Semantics are not verified.<!--/data--><br><code>asserted</code> <!--data:tier-asserted-->Unrecognised language: sanity checks only. Any claim of a fix is the model&#x27;s, not Saikou&#x27;s.<!--/data--></dd></div>
+    <div><dt>Two modes, two policies</dt><dd><code>verify</code> judges a claimed fix and is strict: a sink that survives a claimed fix blocks. <code>diff</code> gates an ordinary pull request and only blocks what the change <em>introduced</em>, so old code does not fail new pull requests.</dd></div>
+  </dl>
+  <p>There is no score: findings are never added up, because a number invites trust the checks have not earned. And the author's claim is never evidence - if an AI says "I fixed the injection", that is recorded as an unverified claim.</p>
+</div></section>
+
+<section id="checks" class="tint"><div class="wrap">
+  <h2>What it checks</h2>
+  <dl class="families">
+    <div><dt>Suppression laundering <span class="prov">mechanical</span></dt><dd><code>nosec</code>, <code>nosemgrep</code>, <code>noqa: S&hellip;</code>, <code>eslint-disable</code> on a security rule, <code>usedforsecurity=False</code> and more: <!--data:marker-kinds-->19<!--/data--> kinds, counted per kind, in real comments only.</dd></div>
+    <div><dt>Weakened analyser configuration <span class="prov">mechanical</span></dt><dd>New <code>skips</code> under <code>[tool.bandit]</code>, security rules ignored in ruff or flake8, new <code>.semgrepignore</code> entries, security ESLint rules switched off.</dd></div>
+    <div><dt>Unwired guards <span class="prov">parser</span></dt><dd><code>safe = sanitize(p)</code> is computed, then <code>open(p)</code> is used. In JavaScript and TypeScript also async guards used without <code>await</code>.</dd></div>
+    <div><dt>Partial, shared-sink fixes <span class="prov">parser</span></dt><dd>One caller parameterised while an interpolated string still reaches the raw sink through a wrapper.</dd></div>
+    <div><dt>Dangerous sinks <span class="prov">parser</span></dt><dd>New <code>shell=True</code>, <code>verify=False</code>, interpolated SQL, <code>eval</code> on non-literals, MD5 or SHA-1 over passwords, hardcoded keys. Old ones block only when a fix for that class was claimed.</dd></div>
+    <div><dt>Elision and no-op edits <span class="prov">parser</span></dt><dd><code>// ... existing code ...</code>, "rest unchanged", emptied function bodies, comment-only "fixes", output that no longer parses.</dd></div>
+  </dl>
+  <details class="catalogue" data-catalogue>
+    <summary>All <!--data:check-count-->38<!--/data--> checks, with what each one means</summary>
+    <div class="filters" data-filters hidden role="group" aria-label="Show checks established by">
+      <button type="button" aria-pressed="true" data-prov="">all</button>
+      <button type="button" aria-pressed="false" data-prov="tool">tool</button>
+      <button type="button" aria-pressed="false" data-prov="parser">parser</button>
+      <button type="button" aria-pressed="false" data-prov="mechanical">mechanical</button>
+    </div>
+    <div class="tablewrap" tabindex="0"><table class="cat-table"><!--data:catalogue-table--><thead><tr><th>Check</th><th>Established by</th><th>Applies to</th><th>Effect</th><th>Mode</th></tr></thead><tbody><tr data-prov="mechanical"><td><strong>New analyser suppression</strong> <code>suppression_introduced</code><p>A suppression marker (nosec, NOSONAR, lgtm or codeql[...], nosemgrep, noqa: S..., eslint-disable on a security rule, usedforsecurity=False, ...) appears more often than before. Counted per marker kind, so editing a line that was already suppressed is not flagged. In Python, comment markers count only in real comments, which is where bandit 1.7.3+, Sonar and CodeQL read them; a marker inside a string literal, such as fake-fix test data, is not counted. bandit 1.7.0-1.7.2 did honour one there, so the analyser extra requires 1.7.3. noqa and nosemgrep still count anywhere on the line, because flake8 and semgrep match the raw line. A word glued to a marker (nosecure) counts, because bandit reads it as a bare marker, and so does a marker that only shows after decoding the declared source encoding. usedforsecurity set to anything but True counts. A marker moved onto code that had none, while the number of markers stays the same, is reported too (in Python, per statement). Python that does not tokenize is counted as text. In change gating only markers that silence a security analyser block; a bare noqa counts as one on a statement that makes a call bandit reports (subprocess, eval, yaml.load, md5, pickle, ...), usedforsecurity does on password material, and other type and style markers become a warning. In JavaScript and TypeScript, block comments count as well, an ESLint directive without a rule list counts as a security suppression where it covers a line that holds a risky call (eval, new Function, child_process, fs, innerHTML, ...), a marker moved onto another line is reported, and a TypeScript directive is a warning.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Blocks</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Type/style suppression added</strong> <code>suppression_added</code><p>A type-checker or style suppression (type: ignore, ts-ignore, pylint disable, ...) was added in a change. Not blocking: this is ordinary engineering, but worth a glance.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Warns</td><td><code>diff</code></td></tr><tr data-prov="mechanical"><td><strong>Analyser config referenced in output</strong> <code>analyser_config_touched</code><p>The proposed output names an analyser configuration file (.bandit, pyproject.toml, .semgrepignore, ...) that the input did not. Suppression moved out of band is still suppression.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Blocks</td><td><code>verify</code></td></tr><tr data-prov="mechanical"><td><strong>Security analyser configuration weakened</strong> <code>analyser_config_weakened</code><p>In a changed config file: new skips under [tool.bandit], security rules ignored in ruff/flake8 (S rules, except S101 which only warns), new .semgrepignore / .gitleaksignore entries, security ESLint rules switched off, Sonar exclusions, gosec disabled. Comments and unrelated keys are ignored.</p></td><td><span class="prov">mechanical</span></td><td>Analyser configuration</td><td>Blocks</td><td><code>diff</code></td></tr><tr data-prov="mechanical"><td><strong>Linter configuration relaxed</strong> <code>linter_config_relaxed</code><p>A style or type linter was relaxed in a config file. Not a security analyser, so it only warns.</p></td><td><span class="prov">mechanical</span></td><td>Analyser configuration</td><td>Warns</td><td><code>diff</code></td></tr><tr data-prov="mechanical"><td><strong>Changed file could not be checked</strong> <code>content_not_checked</code><p>The new version of a changed file in a language Saikou checks, or of an analyser configuration file, could not be checked: it has a NUL byte in its first 8 KB (UTF-16 and UTF-32 with a byte-order mark are read as text), it is larger than 1,000,000 bytes, it could not be read from the work tree, or the path is now a symbolic link or a submodule. Change gating blocks such a file instead of skipping it. Otherwise one NUL byte in a comment, padding past the size limit, or a symlink swapped for a file would let any change in it through unchecked. When only the old version is unreadable, the new one is checked as if the file were new. A file that is meant to be like this, such as a large vendored bundle, can be left out with a pathspec (-- . &#x27;:(exclude)vendor/bundle.js&#x27;); --warn-only content_not_checked demotes the check for every file. Files in languages Saikou does not check are still skipped and listed.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Blocks</td><td><code>diff</code></td></tr><tr data-prov="mechanical"><td><strong>Dropped code marker</strong> <code>elided_output</code><p>The output contains a phrase like &#x27;rest unchanged&#x27;, &#x27;implementation here&#x27; or &#x27;// ... existing code ...&#x27;. Applying it would delete the omitted code. Markers inside string literals and docstrings are ignored. &#x27;keep the existing code&#x27; counts only when it ends the clause or is followed by here, below, unchanged or as is; in prose such as &#x27;keep the existing code style&#x27; it does not. In change gating, only strong markers block.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Blocks</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Reads like dropped code</strong> <code>elision_phrase</code><p>New text such as &#x27;same as above&#x27; or &#x27;for brevity&#x27;. Usually prose, so it only warns.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Warns</td><td><code>diff</code></td></tr><tr data-prov="parser"><td><strong>Function body emptied</strong> <code>body_gutted</code><p>A function or class that had statements now has only &#x27;...&#x27; or &#x27;pass&#x27;. The implementation was dropped. A bare &#x27;...&#x27; that was already there (a Protocol stub) is fine.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blocks</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Output contains no code</strong> <code>empty_output</code><p>The proposed output is empty. In change gating a newly added empty file (such as tests/__init__.py) is ordinary and not reported.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Blocks</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Output may be cut off</strong> <code>truncated_output</code><p>The last line ends in the middle of an expression.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Warns</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Unclosed brackets</strong> <code>unbalanced_delimiters</code><p>More opening than closing brackets (a raw count, so string literals can cause noise).</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Warns</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Output far shorter than input</strong> <code>size_collapse</code><p>A complete module was requested but the output has under 60% of the input&#x27;s non-blank lines.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Warns</td><td><code>verify</code></td></tr><tr data-prov="mechanical"><td><strong>Nothing changed</strong> <code>no_change</code><p>The output is identical to the input, so nothing was fixed. Only checked when a fix is claimed; an ordinary change may leave a file as it was.</p></td><td><span class="prov">mechanical</span></td><td>Any file</td><td>Blocks</td><td><code>verify</code></td></tr><tr data-prov="parser"><td><strong>Only comments or whitespace changed</strong> <code>cosmetic_only_change</code><p>The syntax tree is identical before and after: the edit was comments only, so no executable behaviour changed.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blocks</td><td><code>verify</code></td></tr><tr data-prov="parser"><td><strong>Output no longer parses</strong> <code>parse_failure</code><p>The input parsed as Python but the output does not. It cannot be verified and would break at import.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blocks</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Neither version parses</strong> <code>parse_skipped</code><p>Both versions fail to parse as Python (a template, Python 2, or a fragment). AST checks were skipped; only text checks ran.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Warns</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>shell=True</strong> <code>sink_shell_true</code><p>A subprocess call runs through a shell, so injected text becomes commands. A sink that is new in the output always blocks. One that was already there blocks only when a fix for that threat class was claimed; otherwise it is a warning naming what was left alone.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>TLS verification off</strong> <code>sink_tls_verify_off</code><p>verify=False disables certificate checking. A sink that is new in the output always blocks. One that was already there blocks only when a fix for that threat class was claimed; otherwise it is a warning naming what was left alone.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>debug=True</strong> <code>sink_debug_true</code><p>A web app runs in debug mode, exposing an interactive console. A sink that is new in the output always blocks. One that was already there blocks only when a fix for that threat class was claimed; otherwise it is a warning naming what was left alone.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>eval/exec on a variable</strong> <code>sink_dynamic_exec</code><p>eval() or exec() on something that is not a literal. A sink that is new in the output always blocks. One that was already there blocks only when a fix for that threat class was claimed; otherwise it is a warning naming what was left alone.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>SQL built by interpolation</strong> <code>sink_sql_interpolated</code><p>A query string is built with an f-string, % or + and passed to execute(). A sink that is new in the output always blocks. One that was already there blocks only when a fix for that threat class was claimed; otherwise it is a warning naming what was left alone.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>SQL without parameters</strong> <code>sink_sql_nonparameterised</code><p>execute() receives a computed string and no parameter argument. A sink that is new in the output always blocks. One that was already there blocks only when a fix for that threat class was claimed; otherwise it is a warning naming what was left alone.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Weak hash over a password</strong> <code>sink_weak_hash_secret</code><p>MD5 or SHA-1 applied to password-class data. Use a password KDF (scrypt, argon2, PBKDF2). A sink that is new in the output always blocks. One that was already there blocks only when a fix for that threat class was claimed; otherwise it is a warning naming what was left alone.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Hardcoded key, salt or secret</strong> <code>hardcoded_secret_material</code><p>A secret-sounding name (password, api_key, secret_key, ...) is assigned a literal that looks like real key material. Labels, paths, environment-variable names and dotted identifiers are not flagged. Blocks, except when gating a change to a test file (under test/, tests/ or testing/, or test_*.py, *_test.py, conftest.py, tests.py): fixture tokens are test data, so there it is a warning, unless the value is a recognisable provider key (AWS, GitHub, Slack, Stripe live, Google, OpenAI, Anthropic) or a private key. Absolute paths and paths with .. never count as test files. Verifying a claimed fix always blocks.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Validation computed but never used</strong> <code>guard_computed_but_unused</code><p>A value from a validation/sanitising call (sanitize_*, validate_*, os.path.basename, realpath, ...) is never read, so the unsanitised value still reaches the sink. Blocks when new or when a fix was claimed; otherwise a warning.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Interpolated string reaches a raw sink via a wrapper</strong> <code>shared_sink_injection_path</code><p>A helper forwards its argument into a raw sink, and a caller passes it an interpolated string. Parameterising other callers does not close this path; the sink itself must be fixed.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Validation computed but never used (JS/TS)</strong> <code>js_guard_computed_but_unused</code><p>const safe = sanitize(x) appears once in the file and is never referenced again. Structural check (no parser). A ternary on a guard is not flagged.</p></td><td><span class="prov">mechanical</span></td><td>JavaScript, TypeScript</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Async guard used without await</strong> <code>js_async_guard_in_boolean</code><p>A function defined async in this file is used as a condition without await. A Promise is always truthy, so the guard never rejects.</p></td><td><span class="prov">mechanical</span></td><td>JavaScript, TypeScript</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Async guard left floating</strong> <code>js_floating_guard_promise</code><p>assertAllowed(x).catch(log): the code continues before the guard resolves.</p></td><td><span class="prov">mechanical</span></td><td>JavaScript, TypeScript</td><td>Depends (see text)</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Minified or bundled file skipped</strong> <code>js_generated_skipped</code><p>Structural guard checks assume human-written, line-based code, so generated files are skipped with this warning. Harden the source, not the build output.</p></td><td><span class="prov">mechanical</span></td><td>JavaScript, TypeScript</td><td>Warns</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Public API broken</strong> <code>api_break</code><p>With strict API on: public symbols removed, or a signature changed so that an old call no longer works. Adding an optional parameter is compatible and not flagged.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blocks</td><td><code>verify, diff</code></td></tr><tr data-prov="parser"><td><strong>Protected symbol altered</strong> <code>must_preserve_violated</code><p>A symbol you marked must-preserve was removed or changed.</p></td><td><span class="prov">parser</span></td><td>Python</td><td>Blocks</td><td><code>verify, diff</code></td></tr><tr data-prov="tool"><td><strong>Analyser findings hidden, not fixed</strong> <code>findings_suppressed_not_fixed</code><p>bandit is run twice, normally and with --ignore-nosec. Findings visible only in the suppression-blind run were silenced, never counted as fixed. Needs bandit installed.</p></td><td><span class="prov">tool</span></td><td>Python</td><td>Blocks</td><td><code>verify, diff</code></td></tr><tr data-prov="tool"><td><strong>New analyser findings</strong> <code>new_analyser_findings</code><p>bandit reports findings that were not present before the change.</p></td><td><span class="prov">tool</span></td><td>Python</td><td>Warns</td><td><code>verify, diff</code></td></tr><tr data-prov="mechanical"><td><strong>Model reported nothing left unfixed</strong> <code>empty_deferred_list</code><p>On non-trivial input an empty list of unfixed issues is usually a reporting failure.</p></td><td><span class="prov">mechanical</span></td><td>saikou harden results</td><td>Warns</td><td><code>verify</code></td></tr><tr data-prov="mechanical"><td><strong>Claimed fixes the analyser does not confirm</strong> <code>unsupported_fix_claims</code><p>The model claims fixes but the analyser confirms zero removals. Treat the claims as unverified.</p></td><td><span class="prov">mechanical</span></td><td>saikou harden results</td><td>Warns</td><td><code>verify</code></td></tr><tr data-prov="mechanical"><td><strong>Analyser findings not present in the input</strong> <code>new_findings</code><p>The hardened output has analyser findings the original did not.</p></td><td><span class="prov">mechanical</span></td><td>saikou harden results</td><td>Warns</td><td><code>verify</code></td></tr></tbody><!--/data--></table></div>
+  </details>
+</div></section>
+
+<section id="verified"><div class="wrap">
+  <h2>Checked against the real tools</h2>
+  <p class="narrow-p">The suppression check is the one an AI agent trips most easily, so it is held to the answers of the tools whose markers it judges. For Python, <!--data:py-total-->1,697<!--/data--> generated before/after pairs went to <!--data:py-executed-->bandit 1.9.4, ruff 0.17.1 and semgrep 1.181.0<!--/data--> (executed), and to <!--data:py-patterns-->flake8 7.4.1, sonar-python and CodeQL<!--/data--> (their published marker patterns). In <!--data:py-honoured-->879<!--/data--> pairs a tool honours the new marker: Saikou blocks <!--data:py-blocks-->873<!--/data-->, warns on <!--data:py-warns-->6<!--/data--> and leaves <!--data:py-missed-->0<!--/data--> unreported. For JavaScript and TypeScript, <!--data:js-total-->761<!--/data--> pairs went to <!--data:js-executed-->ESLint v9.39.5, TypeScript 5.9.3 and semgrep 1.181.0<!--/data-->: of <!--data:js-honoured-->186<!--/data--> honoured markers Saikou blocks <!--data:js-blocks-->174<!--/data--> and warns on <!--data:js-warns-->12<!--/data--> (type-checker directives), <!--data:js-missed-->0<!--/data--> unreported.</p>
+  <div class="chart-switch" data-switch hidden role="group" aria-label="Language">
+    <button type="button" aria-pressed="true" data-show="python">Python</button>
+    <button type="button" aria-pressed="false" data-show="js">JavaScript, TypeScript</button>
+  </div>
+  <div class="chart" data-coverage-chart aria-hidden="true"></div>
+  <p class="waffle-key" data-chart-key hidden><span class="sw sw-block"></span> Saikou blocks <span class="sw sw-new"></span> Saikou warns <span class="sw sw-false"></span> not reported</p>
+  <div class="cov-tables">
+    <div class="cov" data-cov="python"><h3>Python: pairs per reference tool</h3>
+      <div class="tablewrap" tabindex="0"><table><!--data:py-table--><thead><tr><th>Reference tool</th><th>Honours the new marker</th><th>Saikou blocks</th><th>Saikou warns</th><th>Not reported</th></tr></thead><tbody><tr><td>bandit</td><td class="num">355</td><td class="num">349</td><td class="num">6</td><td class="num">0</td></tr><tr><td>flake8</td><td class="num">158</td><td class="num">158</td><td class="num">0</td><td class="num">0</td></tr><tr><td>ruff</td><td class="num">153</td><td class="num">148</td><td class="num">5</td><td class="num">0</td></tr><tr><td>sonar-python</td><td class="num">302</td><td class="num">302</td><td class="num">0</td><td class="num">0</td></tr><tr><td>CodeQL</td><td class="num">184</td><td class="num">184</td><td class="num">0</td><td class="num">0</td></tr><tr><td>semgrep</td><td class="num">74</td><td class="num">74</td><td class="num">0</td><td class="num">0</td></tr></tbody><!--/data--></table></div></div>
+    <div class="cov" data-cov="js"><h3>JavaScript and TypeScript: pairs per reference tool</h3>
+      <div class="tablewrap" tabindex="0"><table><!--data:js-table--><thead><tr><th>Reference tool</th><th>Honours the new marker</th><th>Saikou blocks</th><th>Saikou warns</th><th>Not reported</th></tr></thead><tbody><tr><td>ESLint</td><td class="num">110</td><td class="num">110</td><td class="num">0</td><td class="num">0</td></tr><tr><td>TypeScript</td><td class="num">12</td><td class="num">0</td><td class="num">12</td><td class="num">0</td></tr><tr><td>semgrep</td><td class="num">64</td><td class="num">64</td><td class="num">0</td><td class="num">0</td></tr></tbody><!--/data--></table></div></div>
+  </div>
+  <p class="narrow-p">Where no tool honours the marker, Saikou blocks anyway when it looks like a security suppression (<!--data:py-over-->585<!--/data--> Python pairs, <!--data:js-over-->105<!--/data--> JavaScript and TypeScript pairs): on another line, naming another rule, or in a file the tools cannot read. The test suite re-checks every verdict on each run, and a weekly job asks the tools again and fails when an answer changes.</p>
+  <p class="narrow-p">This is a statement with a scope, not a promise. Not covered: other languages, other versions of these tools, marker forms that are not among the pairs. The full <a href="https://github.com/SuperfastSimon/saikou/blob/main/docs/conformance/suppression-coverage.md">coverage statement</a> is generated from the same test data.</p>
+</div></section>
+
+<section id="measured" class="tint"><div class="wrap">
+  <h2>Measured on code nobody wrote for it</h2>
+  <p class="narrow-p">A check that wrongly blocks real code is also a defect. <!--data:measured-files-->2,824<!--/data--> real files each got a harmless edit (a trivial new function) and went through <code>diff</code> mode: <!--data:measured-false-->0<!--/data--> were blocked. Run the same files as if they were new code, and some are: they contain a real <code>eval</code>, <code>exec</code> or <code>shell=True</code>, which new code should have to justify.</p>
+  <div class="chart-switch" data-waffle-switch hidden role="group" aria-label="Measurement">
+    <button type="button" aria-pressed="true" data-show="edit">Harmless edit</button>
+    <button type="button" aria-pressed="false" data-show="new">Same files as new code</button>
+  </div>
+  <div class="waffles" data-waffles aria-hidden="true"></div>
+  <p class="waffle-key" data-waffle-key hidden><span class="sw sw-ok"></span> file not blocked <span class="sw sw-new"></span> blocked as new code <span class="sw sw-false"></span> harmless edit blocked</p>
+  <div class="tablewrap" tabindex="0"><table><!--data:measured-table--><thead><tr><th>Corpus</th><th>Files</th><th>Harmless edit blocked</th><th>Same files as new code, blocked</th></tr></thead><tbody><tr><td>CPython 3.11 standard library</td><td class="num">600</td><td class="num">0</td><td class="num">33</td></tr><tr><td>flask, fastapi, starlette, aiohttp, requests, pydantic, httpx, jinja2, werkzeug</td><td class="num">380</td><td class="num">0</td><td class="num">8</td></tr><tr><td>JavaScript (express and its dependencies)</td><td class="num">826</td><td class="num">0</td><td class="num">2</td></tr><tr><td>TypeScript (mostly declaration files)</td><td class="num">1,018</td><td class="num">0</td><td class="num">0</td></tr></tbody><!--/data--></table></div>
+  <p class="narrow-p">Each false positive found while measuring is locked in as a regression test, in the engine self-test (<!--data:selftest-checks-->123<!--/data--> checks, no network, no key: <code>saikou selftest</code>) or in the test suite. Method: <code>scripts/fp_corpus.py</code>; raw results: <code>docs/measurements/</code>.</p>
+</div></section>
+
+<section id="use"><div class="wrap">
+  <h2>Use it</h2>
+  <ol class="quick">
+    <li><span class="step">Install</span><pre tabindex="0" class="term">pip install saikou</pre><p>Python 3.9 or newer. The engine uses the standard library only.</p></li>
+    <li><span class="step">Check a claimed fix</span><pre tabindex="0" class="term">saikou verify before.py after.py --claimed-threats injection</pre><p>Strict: what the fix claims to repair has to be repaired.</p></li>
+    <li><span class="step">Gate a pull request</span><pre tabindex="0" class="term">saikou diff --base origin/main</pre><p>Checks every changed file, blocks only what the change introduced. Output as text, JSON or SARIF.</p></li>
+  </ol>
+  <h3>Where else it runs</h3>
+  <dl class="ruled">
+    <div><dt>GitHub Action</dt><dd><pre tabindex="0" class="term">- uses: SuperfastSimon/saikou@v1
+  with:
+    only-agent-prs: "true"</pre><p>Findings appear in code scanning and the job summary. <code>only-agent-prs</code> checks only pull requests opened by bots or AI agents.</p></dd></div>
+    <div><dt>pre-commit</dt><dd><pre tabindex="0" class="term">repos:
+  - repo: https://github.com/SuperfastSimon/saikou
+    rev: v<!--data:version-->1.2.0<!--/data-->
+    hooks:
+      - id: saikou</pre></dd></div>
+    <div><dt>Claude Code plugin</dt><dd><pre tabindex="0" class="term">/plugin marketplace add SuperfastSimon/saikou
+/plugin install saikou-harden@saikou</pre><p>The <code>code-hardener</code> agent asks for your threat model, hardens, checks its own output with Saikou, and writes only after you approve the diff.</p></dd></div>
+    <div><dt>Bring your own model</dt><dd><pre tabindex="0" class="term">export LLM_API_KEY=...
+saikou harden app.py --threat injection</pre><p>Any OpenAI-compatible endpoint, including a local one. Dry run by default; <code>--write</code> only applies a result that passed verification. Your code goes to the provider you choose, under their terms.</p></dd></div>
+    <div><dt>As a library</dt><dd><pre tabindex="0" class="term">from saikou import scan_transformation
+findings = scan_transformation(before, after, language="python")</pre></dd></div>
+    <div><dt>In your browser</dt><dd><p>The <a href="tools/checker.html">checker</a> runs a subset of the checks in JavaScript on this page; nothing is sent anywhere.</p></dd></div>
+  </dl>
+</div></section>
+
+<section id="pricing" class="tint"><div class="wrap">
+  <h2>Free and paid</h2>
+  <p class="narrow-p">Everything above is free and open source under Apache-2.0, now and later. Paid plans are planned for teams that need to <em>show</em> auditors that fixes were checked independently. They are <strong>not on sale yet</strong>.</p>
+  <div class="tablewrap" tabindex="0"><table class="plans">
+    <thead><tr><th>Plan</th><th>Price</th><th>What it adds</th></tr></thead>
+    <tbody>
+      <tr><td>Open source</td><td class="num">Free</td><td>Engine, CLI, GitHub Action, pre-commit hook, Claude Code plugin, in-browser checker.</td></tr>
+      <tr><td>Pro (planned)</td><td class="num">about &euro;19 / org / month</td><td>Signed evidence-ledger export mapped to NIS2 Art. 21(2)(e) and ISO 27001 A.8.25&ndash;8.28, plus an organisation policy file (must-preserve symbols, stricter rules, allowlists).</td></tr>
+      <tr><td>Team (planned)</td><td class="num">about &euro;49 / org / month</td><td>Everything in Pro, plus a sticky pull-request comment and a trend report of checked fixes over time.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Planned prices, subject to change. Interested? <a href="mailto:ceo@saikou.tech?subject=Saikou%20Pro%20waitlist">Tell me what you would need</a> - I read every message.</p>
+</div></section>
+
+<section id="faq"><div class="wrap narrow">
+  <h2>Questions</h2>
+  <details class="faq"><summary>Is Saikou a vulnerability scanner?</summary>
+    <p>No. It judges <em>changes</em>: it compares the code before and after a fix and asks whether the fix changed the thing that mattered. Keep your static analyser; Saikou checks that fixes to its findings are real.</p></details>
+  <details class="faq"><summary>Does "passes" mean my code is secure?</summary>
+    <p>No. It means no check blocked the change. Saikou reports what it checked and how, and it certifies nothing. The <a href="#limits">limits</a> say what it does not look at.</p></details>
+  <details class="faq"><summary>How is this different from an AI autofix tool?</summary>
+    <p>An autofix tool writes a fix. Saikou judges a fix, whoever or whatever wrote it, and treats the author's description of the fix as an unverified claim. They work together: let the agent fix, let Saikou check the result before it is merged.</p></details>
+  <details class="faq"><summary>Which languages does it check?</summary>
+    <p>Python is parsed on both sides (<code>ast_verified</code>); with <code>--analyser</code> and bandit installed (<code>pip install "saikou[analyser]"</code>), bandit also runs, as extra evidence. JavaScript and TypeScript get structural guard checks and the suppression checks tested against ESLint, the TypeScript compiler and semgrep. Go, Java, C#, PHP, Ruby, Rust, C and C++, Kotlin, Swift, shell and SQL get textual checks (<code>structural</code>). Anything else gets sanity checks only (<code>asserted</code>). Every report states the tier per file.</p></details>
+  <details class="faq"><summary>Does my code leave my machine?</summary>
+    <p><code>verify</code>, <code>diff</code> and the browser checker run locally and send nothing. Only <code>saikou harden</code> sends code, to the model provider you configure, under that provider's terms.</p></details>
+  <details class="faq"><summary>Why is there no score?</summary>
+    <p>A number invites trust the checks have not earned, and it hides which check said what. You get findings, each labelled with how it was established, and a verdict per file.</p></details>
+  <details class="faq"><summary>Can it block a pull request?</summary>
+    <p>Yes. <code>saikou diff</code> exits with 1 on a hard fail, so any CI can gate on it; the GitHub Action does this for you and can limit itself to pull requests opened by bots or AI agents.</p></details>
+  <details class="faq"><summary>What does it cost?</summary>
+    <p>Nothing. The engine and every integration are open source under Apache-2.0. Paid plans for audit evidence are planned and <a href="#pricing">not on sale yet</a>.</p></details>
+</div></section>
+
+<section id="limits" class="tint"><div class="wrap narrow">
+  <h2>What Saikou does not do</h2>
+  <ul class="limits">
+    <li><strong>It certifies nothing.</strong> It reports what it checked and how - never that code is secure.</li>
+    <li><strong>It does not run your code.</strong> Behaviour is checked structurally (syntax tree, API surface) for Python, and not at all for other languages.</li>
+    <li><strong>It is not a vulnerability scanner.</strong> It judges <em>changes</em>. Keep your SAST; Saikou checks that fixes to its findings are real.</li>
+    <li><strong>Analyser evidence is Python-only</strong> (bandit). Other languages get structural checks, and every report says so.</li>
+    <li><strong>One file at a time.</strong> <code>diff</code> checks every changed file, but there is no cross-file data-flow analysis.</li>
+  </ul>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>&copy; 2026 Saikou. Open source under Apache-2.0.</span>
+  <span><a href="legal.html">Legal &amp; privacy</a> &middot; <a href="https://github.com/SuperfastSimon/saikou">GitHub</a> &middot; <a href="mailto:ceo@saikou.tech">Contact</a></span>
+  <span>This site loads no third-party scripts, fonts or trackers.</span>
+</div></footer>
+</body>
+</html>

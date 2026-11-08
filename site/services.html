@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review of AI-written security fixes and NIS2 - Saikou</title>
+<meta name="description" content="Planned: an independent review of AI-written security fixes and, later, external scans as NIS2 evidence. Fixed scope, written authorisation, no certificates.">
+<meta name="theme-color" content="#07080a">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/home.css">
+<link rel="icon" href="Saikou.tech-favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://saikou.tech/services.html">
+<link rel="alternate" hreflang="en" href="https://saikou.tech/services.html">
+<link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/nis2.html">
+<link rel="alternate" hreflang="x-default" href="https://saikou.tech/services.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Saikou">
+<meta property="og:title" content="Review of AI-written security fixes and NIS2 - Saikou">
+<meta property="og:description" content="Planned: an independent review of AI-written security fixes and, later, external scans as NIS2 evidence. Fixed scope, written authorisation, no certificates.">
+<meta property="og:url" content="https://saikou.tech/services.html">
+<meta property="og:locale" content="en_GB">
+<meta property="og:locale:alternate" content="nl_NL">
+<meta property="og:image" content="https://saikou.tech/assets/og-en.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A one-line AI fix that only adds a nosec comment to a shell=True call, stamped Blocked by Saikou.">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head"><div class="wrap">
+  <a class="brand" href="index.html"><img src="Saikou.tech-logo-flat-hor.svg" alt="Saikou" width="94" height="26"></a>
+  <nav class="nav" aria-label="Main">
+    <a href="index.html#demo">Demo</a><a href="index.html#read">Read a report</a><a href="index.html#verified">Evidence</a><a href="index.html#use">Use it</a><a href="index.html#faq">FAQ</a>
+    <a href="tools/checker.html">Try in browser</a><a href="services.html" aria-current="page">Services &amp; NIS2</a>
+    <a class="lang" href="nl/nis2.html" hreflang="nl" lang="nl">NL</a>
+  </nav>
+</div></header>
+
+<main id="main">
+<div class="wrap"><div class="hero">
+  <h1>Your AI wrote the fix. Someone else should check it.</h1>
+  <p class="lede">Planned services for teams whose AI agents write or fix code, and who have to show a customer, an auditor or a board that the fixes were checked by something other than the AI that wrote them.</p>
+  <p class="note narrow-p"><strong>Status:</strong> I am not yet accepting paid engagements. I am registering as a business first (<abbr title="Kamer van Koophandel, the Dutch Chamber of Commerce">KvK</abbr>), and this page will say so when that changes. You can already write to me about your situation, without obligation: <a href="mailto:ceo@saikou.tech?subject=Saikou%20services">ceo@saikou.tech</a>.</p>
+</div></div>
+
+<section id="offers" class="tint"><div class="wrap">
+  <h2>What I plan to offer</h2>
+  <h3>AI-code security review</h3>
+  <dl class="ruled">
+    <div><dt>For</dt><dd>A repository, or the pull requests of one team, where AI agents wrote code or security fixes.</dd></div>
+    <div><dt>Method</dt><dd>I run the <a href="index.html">Saikou engine</a> over the changes, then review what it flags and what it cannot judge.</dd></div>
+    <div><dt>Written report</dt><dd>Every finding with how it was established (<span class="prov">tool</span>, <span class="prov">parser</span> or <span class="prov">mechanical</span>), and a plain list of what was <em>not</em> checked.<p><a href="index.html#read">What these labels mean</a></p></dd></div>
+    <div><dt>Fix pull requests</dt><dd>Only for changes that pass verification. Rejected attempts are shown as rejected, not quietly dropped.</dd></div>
+    <div><dt>JSON and SARIF</dt><dd>The machine-readable result, so your own tooling can use it.</dd></div>
+    <div><dt>Price</dt><dd>Fixed per scope, agreed before I start; indicatively &euro;750&ndash;1,500 per repository.</dd></div>
+    <div><dt>Time</dt><dd>Typically 3&ndash;5 working days.</dd></div>
+    <div><dt>What it is not</dt><dd>A penetration test, or an audit of your whole system.</dd></div>
+  </dl>
+  <h3>External vulnerability scan, in preparation</h3>
+  <dl class="ruled">
+    <div><dt>For</dt><dd>Internet-facing systems you own, as one input to the vulnerability handling NIS2 expects.</dd></div>
+    <div><dt>Report</dt><dd>Findings with evidence, filtered for false positives, with an explicit statement of what was and was not in scope.</dd></div>
+    <div><dt>Price</dt><dd>Indicatively &euro;1,500&ndash;3,000 per engagement.</dd></div>
+    <div><dt>Status</dt><dd><strong>Not offered yet.</strong> I will not scan anything for a client until the tooling refuses targets outside the agreed scope by itself, and a signed authorisation is in place. That work is still to be done.</dd></div>
+  </dl>
+</div></section>
+
+<section id="how"><div class="wrap"><div class="narrow">
+  <h2>How an engagement works</h2>
+  <ol>
+    <li><strong>Scope in writing.</strong> What is in, what is out, what it costs, when it is delivered.</li>
+    <li><strong>Authorisation before anything else.</strong> A signed agreement that you own or may test what is in scope. For scans this is a hard stop, not a formality.</li>
+    <li><strong>Your code stays with me and my tools.</strong> The verification engine runs locally and needs no network. Nothing is sent to an AI provider unless you agree to it in writing, and then only to the provider you name.</li>
+    <li><strong>Report and hand-over.</strong> You get the findings, the evidence and the limits. Questions afterwards are part of the price.</li>
+  </ol>
+  <h3>What you will not get</h3>
+  <ul class="limits">
+    <li>A certificate, a score, or a statement that you are &ldquo;NIS2 compliant&rdquo;. Compliance is a legal judgement; this is evidence for it.</li>
+    <li>Legal advice. For that, ask a lawyer.</li>
+    <li>A guarantee that nothing was missed. Every report states what was checked and how, and anything not listed was not tested.</li>
+  </ul>
+  <p>The scope agreement I would ask you to sign is public: <a href="https://github.com/SuperfastSimon/saikou/tree/main/docs/business">docs/business</a> (English and Dutch, a draft that should be reviewed by a lawyer before use).</p>
+</div></div></section>
+
+<section id="nis2" class="tint"><div class="wrap"><div class="narrow">
+  <h2>Why NIS2 makes this matter</h2>
+  <p>The Dutch <span lang="nl">Cyberbeveiligingswet</span>, which implements the EU&rsquo;s NIS2 directive, has applied since <strong>15 August 2026</strong> to <strong>more than 8,000</strong> organisations in the Netherlands (<a href="https://www.ncsc.nl/nieuws/cbw-en-wwke-vanaf-15-augustus-2026-van-kracht" hreflang="nl">NCSC</a>).</p>
+  <p>Article 21(2)(e) of the directive lists, among the required measures, security in the acquisition, development and maintenance of network and information systems, including vulnerability handling and disclosure (<a href="https://eur-lex.europa.eu/eli/dir/2022/2555/oj/eng">EUR-Lex 2022/2555</a>). When AI agents write part of that code, &ldquo;the agent said it fixed it&rdquo; is a weak answer to &ldquo;how do you know?&rdquo;. An independent check, with its limits written down, is a stronger one.</p>
+  <p>This is context, not legal advice. Whether and how the law applies to your organisation is a question for you and your lawyer.</p>
+</div></div></section>
+
+<section id="contact"><div class="wrap"><div class="narrow">
+  <h2>Talk to me</h2>
+  <p>Describe your situation in a few lines: what you build, where AI agents are involved, who asks you for proof. I will tell you whether I can help and, if I cannot, who might.</p>
+  <p><a class="btn" href="mailto:ceo@saikou.tech?subject=Saikou%20services">Email me</a> or write to ceo@saikou.tech</p>
+</div></div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>&copy; 2026 Saikou. Open source under Apache-2.0.</span>
+  <span><a href="legal.html">Legal &amp; privacy</a> &middot; <a href="https://github.com/SuperfastSimon/saikou">GitHub</a> &middot; <a href="mailto:ceo@saikou.tech">Contact</a></span>
+  <span>This site loads no third-party scripts, fonts or trackers.</span>
+</div></footer>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Controle van beveiligingsfixes van AI en NIS2 - Saikou</title>
+<meta name="description" content="Gepland: onafhankelijke controle van beveiligingsfixes van AI en later externe scans als NIS2-bewijs. Vaste scope, schriftelijke toestemming, geen certificaten.">
+<meta name="theme-color" content="#07080a">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/home.css">
+<link rel="icon" href="../Saikou.tech-favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://saikou.tech/nl/nis2.html">
+<link rel="alternate" hreflang="en" href="https://saikou.tech/services.html">
+<link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/nis2.html">
+<link rel="alternate" hreflang="x-default" href="https://saikou.tech/services.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Saikou">
+<meta property="og:title" content="Controle van beveiligingsfixes van AI en NIS2 - Saikou">
+<meta property="og:description" content="Gepland: onafhankelijke controle van beveiligingsfixes van AI en later externe scans als NIS2-bewijs. Vaste scope, schriftelijke toestemming, geen certificaten.">
+<meta property="og:url" content="https://saikou.tech/nl/nis2.html">
+<meta property="og:locale" content="nl_NL">
+<meta property="og:locale:alternate" content="en_GB">
+<meta property="og:image" content="https://saikou.tech/assets/og-nl.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Een AI-fix van één regel die alleen een nosec-commentaar toevoegt aan een aanroep met shell=True, door Saikou geblokkeerd.">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip" href="#main">Naar de inhoud</a>
+<header class="site-head"><div class="wrap">
+  <a class="brand" href="index.html"><img src="../Saikou.tech-logo-flat-hor.svg" alt="Saikou" width="94" height="26"></a>
+  <nav class="nav" aria-label="Hoofdmenu">
+    <a href="index.html#demo">Demo</a><a href="index.html#lezen">Rapport lezen</a><a href="index.html#geverifieerd">Bewijs</a><a href="index.html#gebruik">Gebruik</a><a href="index.html#vragen">Vragen</a>
+    <a href="werkbank.html">Probeer in je browser</a><a href="nis2.html" aria-current="page">Diensten &amp; NIS2</a>
+    <a class="lang" href="../services.html" hreflang="en" lang="en">EN</a>
+  </nav>
+</div></header>
+
+<main id="main">
+<div class="wrap"><div class="hero">
+  <h1>Je AI schreef de fix. Laat iemand anders hem controleren.</h1>
+  <p class="lede">Geplande diensten voor teams die AI-agents code laten schrijven of repareren, en aan een klant, een auditor of een bestuur moeten laten zien dat de fixes zijn gecontroleerd door iets anders dan de AI die ze schreef.</p>
+  <p class="note narrow-p"><strong>Status:</strong> ik neem nog geen betaalde opdrachten aan. Eerst schrijf ik me in als ondernemer (KvK); zodra dat verandert, staat dat hier. Je kunt me nu al vrijblijvend schrijven over je situatie: <a href="mailto:ceo@saikou.tech?subject=Saikou%20diensten">ceo@saikou.tech</a>.</p>
+</div></div>
+
+<section id="aanbod" class="tint"><div class="wrap">
+  <h2>Wat ik van plan ben aan te bieden</h2>
+  <h3>AI-code securitybeoordeling</h3>
+  <dl class="ruled">
+    <div><dt>Voor</dt><dd>Een repository, of de pull requests van &eacute;&eacute;n team, waar AI-agents code of beveiligingsfixes schreven.</dd></div>
+    <div><dt>Werkwijze</dt><dd>Ik draai de <a href="index.html">Saikou-engine</a> over de wijzigingen en beoordeel daarna wat hij meldt en wat hij zelf niet kan beoordelen.</dd></div>
+    <div><dt>Schriftelijk rapport</dt><dd>Elke bevinding met hoe ze is vastgesteld (<span class="prov" lang="en">tool</span>, <span class="prov" lang="en">parser</span> of <span class="prov" lang="en">mechanical</span>), en een heldere lijst van wat <em>niet</em> is gecontroleerd.<p><a href="index.html#lezen">Wat deze labels betekenen</a></p></dd></div>
+    <div><dt>Fix-pull-requests</dt><dd>Alleen voor wijzigingen die de verificatie doorstaan. Afgekeurde pogingen worden als afgekeurd getoond, niet stilletjes weggelaten.</dd></div>
+    <div><dt>JSON en SARIF</dt><dd>Het machineleesbare resultaat, voor je eigen tooling.</dd></div>
+    <div><dt>Prijs</dt><dd>Vast per scope, v&oacute;&oacute;r de start afgesproken; indicatief &euro;750&ndash;1.500 per repository.</dd></div>
+    <div><dt>Doorlooptijd</dt><dd>Doorgaans 3&ndash;5 werkdagen.</dd></div>
+    <div><dt>Wat het niet is</dt><dd>Een penetratietest, of een audit van je hele systeem.</dd></div>
+  </dl>
+  <h3>Externe kwetsbaarheidsscan, in voorbereiding</h3>
+  <dl class="ruled">
+    <div><dt>Voor</dt><dd>Internetgerichte systemen die van jou zijn, als &eacute;&eacute;n input voor het kwetsbaarhedenbeheer dat NIS2 verwacht.</dd></div>
+    <div><dt>Rapport</dt><dd>Bevindingen met bewijs, gefilterd op valse meldingen, met een expliciete verklaring van wat wel en niet in scope was.</dd></div>
+    <div><dt>Prijs</dt><dd>Indicatief &euro;1.500&ndash;3.000 per opdracht.</dd></div>
+    <div><dt>Status</dt><dd><strong>Nog niet beschikbaar.</strong> Ik scan niets voor een klant zolang de tooling niet zelf doelen weigert die buiten de afgesproken scope vallen en er geen getekende toestemming ligt. Dat werk moet nog gebeuren.</dd></div>
+  </dl>
+</div></section>
+
+<section id="werkwijze"><div class="wrap"><div class="narrow">
+  <h2>Hoe een opdracht verloopt</h2>
+  <ol>
+    <li><strong>Scope op papier.</strong> Wat erin zit, wat erbuiten valt, wat het kost, wanneer het klaar is.</li>
+    <li><strong>Eerst toestemming.</strong> Een getekende overeenkomst dat je eigenaar bent van of mag testen wat in scope valt. Bij scans is dit een harde stop, geen formaliteit.</li>
+    <li><strong>Je code blijft bij mij en mijn tools.</strong> De verificatie-engine draait lokaal en heeft geen netwerk nodig. Er gaat niets naar een AI-aanbieder tenzij jij daar schriftelijk mee instemt, en dan alleen naar de aanbieder die jij noemt.</li>
+    <li><strong>Rapport en overdracht.</strong> Je krijgt de bevindingen, het bewijs en de grenzen. Vragen achteraf zitten in de prijs.</li>
+  </ol>
+  <h3>Wat je niet krijgt</h3>
+  <ul class="limits">
+    <li>Een certificaat, een score, of de uitspraak dat je &ldquo;NIS2-compliant&rdquo; bent. Compliance is een juridisch oordeel; dit is bewijsmateriaal daarvoor.</li>
+    <li>Juridisch advies. Daarvoor ga je naar een jurist.</li>
+    <li>Een garantie dat niets gemist is. Elk rapport zegt wat is gecontroleerd en hoe; wat er niet in staat is niet getest.</li>
+  </ul>
+  <p>De scope-overeenkomst die ik je zou vragen te tekenen is openbaar: <a href="https://github.com/SuperfastSimon/saikou/tree/main/docs/business">docs/business</a> (Nederlands en Engels, een concept dat v&oacute;&oacute;r gebruik door een jurist moet worden gecontroleerd).</p>
+</div></div></section>
+
+<section id="nis2" class="tint"><div class="wrap"><div class="narrow">
+  <h2>Waarom NIS2 dit relevant maakt</h2>
+  <p>De Cyberbeveiligingswet, de Nederlandse uitwerking van de Europese NIS2-richtlijn, geldt sinds <strong>15 augustus 2026</strong> voor <strong>ruim 8.000</strong> organisaties in Nederland (<a href="https://www.ncsc.nl/nieuws/cbw-en-wwke-vanaf-15-augustus-2026-van-kracht">NCSC</a>).</p>
+  <p>Artikel 21, tweede lid, onder e, van de richtlijn noemt onder de verplichte maatregelen: beveiliging bij het verwerven, ontwikkelen en onderhouden van netwerk- en informatiesystemen, met inbegrip van het omgaan met en openbaar maken van kwetsbaarheden (<a href="https://eur-lex.europa.eu/eli/dir/2022/2555/oj/eng" hreflang="en">EUR-Lex 2022/2555</a>). Als AI-agents een deel van die code schrijven, is &ldquo;de agent zei dat hij het gefixt had&rdquo; een zwak antwoord op &ldquo;hoe weet je dat?&rdquo;. Een onafhankelijke controle, met de grenzen opgeschreven, is een sterker antwoord.</p>
+  <p>Dit is context, geen juridisch advies. Of en hoe de wet op jouw organisatie van toepassing is, is een vraag voor jou en je jurist.</p>
+</div></div></section>
+
+<section id="contact"><div class="wrap"><div class="narrow">
+  <h2>Vertel me je situatie</h2>
+  <p>Een paar regels is genoeg: wat je bouwt, waar AI-agents bij betrokken zijn, wie jou om bewijs vraagt. Ik laat je weten of ik kan helpen en, zo niet, wie dat misschien wel kan.</p>
+  <p><a class="btn" href="mailto:ceo@saikou.tech?subject=Saikou%20diensten">Mail me</a> of schrijf naar ceo@saikou.tech</p>
+</div></div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>&copy; 2026 Saikou. Open source onder Apache-2.0.</span>
+  <span><a href="../legal.html#nl">Juridisch &amp; privacy</a> &middot; <a href="https://github.com/SuperfastSimon/saikou">GitHub</a> &middot; <a href="mailto:ceo@saikou.tech">Contact</a></span>
+  <span>Deze site laadt geen scripts, lettertypen of trackers van derden.</span>
+</div></footer>
+</body>
+</html>

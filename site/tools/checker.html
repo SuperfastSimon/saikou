@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare code before and after a security fix - Saikou</title>
+<meta name="description" content="Paste the code from before and after a claimed security fix. Pattern checks in your browser show what the change added, kept or removed. Nothing is sent.">
+<meta name="theme-color" content="#07080a">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/home.css">
+<link rel="icon" href="../Saikou.tech-favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://saikou.tech/tools/checker.html">
+<link rel="alternate" hreflang="en" href="https://saikou.tech/tools/checker.html">
+<link rel="alternate" hreflang="nl" href="https://saikou.tech/nl/werkbank.html">
+<link rel="alternate" hreflang="x-default" href="https://saikou.tech/tools/checker.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Saikou">
+<meta property="og:title" content="Compare code before and after a security fix - Saikou">
+<meta property="og:description" content="Paste the code from before and after a claimed security fix. Pattern checks in your browser show what the change added, kept or removed. Nothing is sent.">
+<meta property="og:url" content="https://saikou.tech/tools/checker.html">
+<meta property="og:locale" content="en_GB">
+<meta property="og:locale:alternate" content="nl_NL">
+<meta property="og:image" content="https://saikou.tech/assets/og-en.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A one-line AI fix that only adds a nosec comment to a shell=True call, stamped Blocked by Saikou.">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head"><div class="wrap">
+  <a class="brand" href="../index.html"><img src="../Saikou.tech-logo-flat-hor.svg" alt="Saikou" width="94" height="26"></a>
+  <nav class="nav" aria-label="Main">
+    <a href="../index.html#demo">Demo</a><a href="../index.html#read">Read a report</a><a href="../index.html#verified">Evidence</a><a href="../index.html#use">Use it</a><a href="../index.html#faq">FAQ</a>
+    <a href="checker.html" aria-current="page">Try in browser</a><a href="../services.html">Services &amp; NIS2</a>
+    <a class="lang" href="../nl/werkbank.html" hreflang="nl" lang="nl">NL</a>
+  </nav>
+</div></header>
+
+<main id="main">
+<div class="tool-bar"><div class="wrap">
+  <h1>Check what a fix changed, not what it claims.</h1>
+  <p class="scope">Mechanical pattern checks, run as JavaScript in your browser. The dangerous-pattern checks are written for Python; the suppression checks also cover JavaScript/TypeScript, Java and C#. No syntax tree, no external analyser, no server: nothing you paste is sent anywhere.</p>
+</div></div>
+
+<section id="paste"><div class="wrap">
+  <h2>Paste the code</h2>
+  <p class="narrow-p">Put the original code in Before and the changed code in After, then press Check. An example is checked as soon as you load it. The page opens with the fake fix already checked.</p>
+  <div class="presets" role="group" aria-labelledby="ex-label">
+    <span id="ex-label">Load an example (replaces both boxes):</span>
+    <button class="preset" data-preset="fake" type="button">Fake fix (nosec)</button>
+    <button class="preset" data-preset="real" type="button">Real fix</button>
+    <button class="preset" data-preset="secret" type="button">New hardcoded secret</button>
+  </div>
+  <div class="io">
+    <div><label for="ta-before">Before</label><textarea id="ta-before" spellcheck="false" placeholder="Paste the original code"></textarea></div>
+    <div><label for="ta-after">After</label><textarea id="ta-after" spellcheck="false" placeholder="Paste the changed code"></textarea></div>
+  </div>
+  <p><button class="run" id="run" type="button">Check</button><span class="run-note">Runs on this page. No network traffic.</span></p>
+  <noscript><p class="narrow-p">This checker needs JavaScript. It runs on this page and sends nothing.</p></noscript>
+</div></section>
+
+<section id="result"><div class="wrap">
+  <h2>Result</h2>
+  <div class="results">
+    <div class="results-head" role="status" aria-live="polite" aria-atomic="true"><div class="stamp" id="stamp">&mdash;</div><div class="results-summary" id="summary"></div></div>
+    <div id="rows"></div>
+    <div class="results-foot">This shows what was found, not a guarantee that nothing was missed. Absence of a finding is never evidence of a fix.</div>
+  </div>
+</div></section>
+
+<section id="reading" class="tint"><div class="wrap">
+  <h2>How to read the result</h2>
+  <dl class="ruled">
+    <div><dt>What it looks for</dt><dd>
+      <p>Suppressions: <code># nosec</code>, <code># noqa</code>, <code># type: ignore</code>, <code>usedforsecurity=False</code>, <code>// eslint-disable</code>, <code>@ts-ignore</code>, <code>@ts-nocheck</code>, <code>@SuppressWarnings</code> and <code>#pragma warning disable</code>.</p>
+      <p>Dangerous patterns: <code>shell=True</code>, <code>verify=False</code>, <code>debug=True</code>, <code>eval(</code> or <code>exec(</code> with an argument that starts with a name, such as a variable, <code>md5(</code> or <code>sha1(</code>, and a name ending in password, secret, api_key or token that is set to a quoted value of 8 or more characters.</p>
+      <p>Placeholders for dropped code: <code>rest unchanged</code> or <code>rest of the code unchanged</code>, <code lang="nl">rest blijft hetzelfde</code> or <code lang="nl">rest blijft ongewijzigd</code>, <code>omitted for brevity</code>, <code>implementation here</code> or <code>implementation goes here</code>, and a line with only <code>...</code>.</p>
+      <p>And whether Before and After are identical, or differ only in comments and whitespace.</p>
+      <p>The dangerous patterns follow Python syntax (keyword arguments, <code>True</code> and <code>False</code>). Code in other languages mostly gets the suppression and placeholder checks.</p>
+    </dd></div>
+    <div><dt>The stamp</dt><dd><p><b>Blocked</b> when at least one finding is a hard fail. <b>Still open</b> when there is no hard fail, but a dangerous pattern that was in Before also appears in After. <b>No check blocked it</b> when no finding is a hard fail or a warning: nothing was reported, or a dangerous pattern from Before is no longer in After. None of the three says the code is secure.</p></dd></div>
+    <div><dt>Each finding</dt><dd>
+      <p><span class="pill fail">Hard fail</span> blocks. The change added a suppression or a dangerous pattern, After contains a possible placeholder for dropped code, or Before and After are the same apart from comments and whitespace.</p>
+      <p><span class="pill warn">Warn</span> does not block: a dangerous pattern that was in Before also appears in After, no more often than before.</p>
+      <p><span class="pill pass">Pass</span> means a dangerous pattern from Before is no longer in After, or that no check reported anything. A pattern that is gone shows the code changed there, not that the replacement is correct.</p>
+    </dd></div>
+    <div><dt>How it was found</dt><dd><p><span class="chip">mechanical</span> on every finding here. Each check counts markers, phrases or code patterns in the text, or compares the text with whitespace, <code>/* */</code> blocks and everything after <code>#</code> or <code>//</code> removed, also inside strings. None of them parses the code, so a pattern inside a comment or a string counts too. The engine also has <span class="chip">parser</span> findings, from syntax trees, and <span class="chip">tool</span> findings, from bandit. This page has neither.</p></dd></div>
+  </dl>
+</div></section>
+
+<section id="limits"><div class="wrap">
+  <h2>What this page does not do</h2>
+  <ul class="limits narrow-p">
+    <li><strong>No syntax tree.</strong> This page compares text and patterns only. For Python code, the engine parses both versions; which checks other languages get is listed under <a href="../index.html#faq">Questions</a> on the home page.</li>
+    <li><strong>No external analyser.</strong> The engine can run bandit twice, normally and with suppressions ignored, to see what a suppression hides. This page cannot.</li>
+    <li><strong>No data-flow analysis.</strong> Unsafe input that reaches a dangerous call through a helper function is not found here.</li>
+    <li><strong>No claimed threat.</strong> You cannot say what the fix claims to repair, so a dangerous pattern that survives is only a warning here. The engine blocks it when you name its threat class with <code>--claimed-threats</code>, as in step 2 under <a href="../index.html#use">Use it</a>.</li>
+    <li><strong>No check for cut-off code.</strong> If After is cut short, a pattern that was in the missing part shows as removed, with a Pass. This page only refuses an empty box. The engine blocks an empty result and warns when the output looks cut off.</li>
+    <li><strong>Comments are found by pattern.</strong> Everything after <code>#</code> or <code>//</code> counts as a comment, also inside a string such as a URL. A real change there can be reported as only comments or whitespace.</li>
+    <li><strong>Rough pattern checks.</strong> Any <code>md5(</code> or <code>sha1(</code> call counts, a file checksum too; the engine's own check flags them only over password data. The secret check looks only at the end of the name and the length of the value; the engine also splits the name into words and skips values that are URLs, e-mail addresses or dotted numbers such as versions.</li>
+  </ul>
+  <p class="narrow-p">For the engine's checks, run it on your own machine:</p>
+  <pre tabindex="0" class="term narrow-p">pip install saikou
+saikou verify before.py after.py --claimed-threats injection</pre>
+  <p class="narrow-p">Replace <code>injection</code> with the threat class your fix claims to repair. For the bandit step (Python only), install with <code>pip install "saikou[analyser]"</code> and add <code>--analyser</code>. Or use the <code>code-hardener</code> agent in Claude Code. <a href="../index.html#use">More ways to run it</a>.</p>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>&copy; 2026 Saikou. Open source under Apache-2.0.</span>
+  <span><a href="../legal.html">Legal &amp; privacy</a> &middot; <a href="https://github.com/SuperfastSimon/saikou">GitHub</a> &middot; <a href="mailto:ceo@saikou.tech">Contact</a></span>
+  <span>This site loads no third-party scripts, fonts or trackers.</span>
+</div></footer>
+<script src="../assets/checker.js"></script>
+</body>
+</html>
