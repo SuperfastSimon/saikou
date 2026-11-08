@@ -134,6 +134,23 @@ def test_every_external_action_is_pinned_to_a_commit():
     assert seen >= 10
 
 
+# A command line `python -m saikou <something>`; the sentence that warns against it names the bare
+# `python -m saikou` and is not matched.
+PY_M_SAIKOU_COMMAND = re.compile(r"python3?\s+-m\s+saikou\s+[\w-]")
+
+
+def test_user_docs_do_not_tell_anyone_to_run_python_m_saikou():
+    """Run in a project that holds a saikou/ folder, `python -m saikou` runs that folder instead of
+    the installed engine; what users and the agents read names the `saikou` console script."""
+    docs = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md")),
+            *sorted((ROOT / "plugins").rglob("*.md")), *sorted((ROOT / ".claude" / "agents").glob("*.md")),
+            *sorted((ROOT / "site").rglob("*.html")), ROOT / "saikou" / "web" / "index.html"]
+    assert (ROOT / "plugins" / "saikou-harden" / "agents" / "code-hardener.md") in docs
+    for f in docs:
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            assert not PY_M_SAIKOU_COMMAND.search(line), (f.relative_to(ROOT).as_posix(), n, line)
+
+
 def _plant(folder: Path) -> Path:
     """A workspace that holds its own saikou, pip and bandit packages and a sitecustomize."""
     marker = folder / "PLANTED-CODE-RAN"
