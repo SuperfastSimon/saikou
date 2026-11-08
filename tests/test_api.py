@@ -1,6 +1,11 @@
 """Hosted HTTP service: fails closed, one error shape, capped bodies, no local operations."""
 
+import asyncio
+import collections
 import importlib
+import logging
+import threading
+import time
 
 import pytest
 
@@ -16,7 +21,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 def _load(monkeypatch, **env):
     for key in ("API_TOKENS", "ENVIRONMENT", "RATE_LIMIT_PER_MINUTE", "MAX_BODY_BYTES",
-                "PLAYGROUND", "LLM_API_KEY"):
+                "PLAYGROUND", "LLM_API_KEY", "MAX_SESSIONS", "SESSION_TTL_S"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
@@ -204,3 +209,161 @@ def test_playground_is_the_web_app_in_hosted_mode(client):
 def test_playground_can_be_switched_off(monkeypatch):
     client = TestClient(_load(monkeypatch, API_TOKENS=TOKEN, PLAYGROUND="0").app)
     assert client.get("/").status_code == 404
+
+
+# ---- review batch C: every error keeps the documented shape ----------------------------------
+
+def test_a_non_ascii_authorization_header_is_a_401(client):
+    """Review finding 10: compare_digest refused the non-ASCII str, so this was a 500."""
+    for value in (b"Bearer " + bytes([0xE9]), ("Bearer " + chr(0xE9) * 3).encode("utf-8"),
+                  b"Basic " + bytes([0xFF, 0xFE])):
+        resp = client.post("/v1/verify", json={"after": CODE}, headers={"Authorization": value})
+        _err(resp, 401, "unauthorized")
+        assert resp.headers["WWW-Authenticate"] == "Bearer"
+
+
+def test_a_non_ascii_token_can_be_used(monkeypatch):
+    token = "t" + chr(0xF6) + "ken-for-tests"
+    client = TestClient(_load(monkeypatch, API_TOKENS=token).app)
+    ok = client.post("/v1/verify", json={"path": "a.py", "after": CODE},
+                     headers={"Authorization": ("Bearer " + token).encode("utf-8")})
+    assert ok.status_code == 200, ok.text
+    _err(client.post("/v1/verify", json={"after": CODE}, headers=AUTH), 401, "unauthorized")
+
+
+def test_batch_with_a_non_string_before_is_a_422(client):
+    """Review finding 11: through the API this was a 500 text/plain."""
+    resp = client.post("/v1/verify/batch", headers=AUTH,
+                       json={"files": [{"path": "a.py", "before": 1, "after": "x = 1"}]})
+    _err(resp, 422, "bad_field")
+
+
+def test_an_unknown_format_is_a_422(client):
+    for path, body in (("/v1/verify", {"after": CODE, "format": "xml"}),
+                       ("/v1/verify/batch", {"files": [{"path": "a.py", "after": CODE}], "format": "xml"})):
+        _err(client.post(path, json=body, headers=AUTH), 422, "bad_field")
+
+
+def test_an_unexpected_error_is_a_json_500_without_details(monkeypatch, caplog):
+    """Review finding 12: an unexpected exception gave a text/plain 500."""
+    api = _load(monkeypatch, API_TOKENS=TOKEN)
+    from saikou import service
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("sentinel-internal-detail at C:/srv/secret/path.py")
+
+    monkeypatch.setattr(service, "verify", boom)
+    client = TestClient(api.app, raise_server_exceptions=False)
+    with caplog.at_level(logging.ERROR, logger="saikou.api"):
+        resp = client.post("/v1/verify", json={"after": CODE}, headers=AUTH)
+    _err(resp, 500, "internal_error")
+    assert resp.headers["content-type"].startswith("application/json")
+    for leak in ("sentinel", "RuntimeError", "Traceback", "secret"):
+        assert leak not in resp.text
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["Cache-Control"] == "no-store"
+    request_id = resp.headers["X-Request-ID"]
+    logged = [r for r in caplog.records if r.name == "saikou.api"]
+    assert logged and logged[0].exc_info and request_id in logged[0].getMessage()
+    assert "sentinel-internal-detail" in caplog.text
+
+
+def test_contract_values_match_the_service(monkeypatch):
+    """The hosted contract accepts exactly the values the local app and the CLI accept."""
+    api = _load(monkeypatch, API_TOKENS=TOKEN)
+    from saikou import service
+    for field, choices in (("compat", service.COMPAT_CHOICES),
+                           ("dependencies", service.DEPENDENCY_CHOICES),
+                           ("error_policy", service.ERROR_POLICY_CHOICES)):
+        for value in choices:
+            assert getattr(api.ContractBody(**{field: value}), field) == value
+        assert getattr(api.ContractBody(), field) == choices[0]
+        client = TestClient(api.app)
+        # A trailing newline must not slip past the pattern: the engine compares exactly.
+        for bad in (choices[0].upper(), choices[0] + "\n", " " + choices[0], "strict"):
+            _err(client.post("/harden/apply", headers=AUTH,
+                             json={"session_id": "x" * 20, "contract": {field: bad}}),
+                 422, "bad_request")
+
+
+def _stub_model(monkeypatch, api):
+    from saikou import llm
+    monkeypatch.setattr(llm, "_post", lambda *a, **k: {"choices": [{
+        "finish_reason": "stop", "message": {"content":
+            '{"hardened_code": "import shlex, subprocess\\n\\ndef run(cmd):\\n'
+            '    return subprocess.call(shlex.split(cmd))\\n", "changes": [], '
+            '"deferred_defects": [], "assumptions": []}'}}]})
+    monkeypatch.setattr(api, "run_hardening",
+                        lambda code, lang, contract, config: llm.run_hardening(
+                            code, lang, contract, config, run_tools=False))
+
+
+def test_one_token_cannot_push_out_another_tokens_session(monkeypatch):
+    """Review finding 14: the oldest session of anyone was evicted when the store was full."""
+    api = _load(monkeypatch, API_TOKENS="token-a-for-tests,token-b-for-tests", MAX_SESSIONS="10",
+                RATE_LIMIT_PER_MINUTE="1000", LLM_API_KEY="test-key-not-real")
+    _stub_model(monkeypatch, api)
+    client = TestClient(api.app)
+    a = {"Authorization": "Bearer token-a-for-tests"}
+    b = {"Authorization": "Bearer token-b-for-tests"}
+    mine = client.post("/harden/intake", json={"code": CODE}, headers=a).json()["session_id"]
+    flood = [client.post("/harden/intake", json={"code": CODE}, headers=b).json()["session_id"]
+             for _ in range(25)]
+    assert len(api._sessions._data) <= 10
+    ok = client.post("/harden/apply", json={"session_id": mine}, headers=a)
+    assert ok.status_code == 200, ok.text
+    # B's share is half the store: its own oldest intakes made room, its newest are kept.
+    _err(client.post("/harden/apply", json={"session_id": flood[0]}, headers=b),
+         404, "session_not_found")
+    assert client.post("/harden/apply", json={"session_id": flood[-1]}, headers=b).status_code == 200
+
+
+def test_a_full_store_takes_from_the_largest_holder():
+    from saikou.engine import Session, SessionStore, detect_language
+
+    store = SessionStore(1800, max_entries=4)
+    det = detect_language("x = 1\n", "python")
+
+    async def fill():
+        now = time.time()
+        small = await store.put(Session("a", det, now), owner="small")
+        big = [await store.put(Session("b", det, now + i + 1), owner="big") for i in range(6)]
+        return small, big
+
+    small, big = asyncio.run(fill())
+    assert len(store._data) == 4
+    assert small in store._data and big[-1] in store._data and big[0] not in store._data
+
+
+def test_rate_limit_holds_under_concurrent_requests(monkeypatch):
+    """Review finding 15: two threads could both pass the check before either appended."""
+    api = _load(monkeypatch, API_TOKENS=TOKEN, RATE_LIMIT_PER_MINUTE="1")
+    barrier = threading.Barrier(2, timeout=1.0)
+
+    class Racy(collections.deque):
+        # Each thread reads the length, then waits for the other: without a lock both read
+        # the empty window before either appends, the moment the race needs. With the lock
+        # the wait times out and the second thread reads the first one's entry.
+        def __len__(self):
+            seen = super().__len__()
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                pass
+            return seen
+
+    api._hits["caller"] = Racy()
+    results = []
+
+    def hit():
+        try:
+            results.append(api.rate_limit("caller"))
+        except api.ServiceError as exc:
+            results.append(exc.status)
+
+    threads = [threading.Thread(target=hit) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert sorted(results, key=str) == [429, "caller"]

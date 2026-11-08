@@ -22,9 +22,13 @@ app (saikou.server), which listens on 127.0.0.1.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 import os
+import re
 import secrets
+import threading
 import time
 from collections import defaultdict, deque
 from typing import Any, Deque, Dict, List, Optional
@@ -62,6 +66,8 @@ def _int_env(name: str, default: int, minimum: int = 1) -> int:
         return default
 
 
+_log = logging.getLogger(__name__)
+
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
 MAX_INPUT_CHARS = _int_env("MAX_INPUT_CHARS", 60000, 1000)
 # The batch limit is 400k characters; JSON escaping and UTF-8 can double that.
@@ -69,9 +75,21 @@ MAX_BODY_BYTES = _int_env("MAX_BODY_BYTES", 2_000_000, 10_000)
 API_TOKENS = frozenset(t.strip() for t in os.getenv("API_TOKENS", "").split(",") if t.strip())
 RATE_LIMIT_PER_MINUTE = _int_env("RATE_LIMIT_PER_MINUTE", 20)
 PLAYGROUND = os.getenv("PLAYGROUND", "1") != "0"
+MAX_SESSIONS = _int_env("MAX_SESSIONS", 500)
 
-_sessions = SessionStore(_int_env("SESSION_TTL_S", 1800), _int_env("MAX_SESSIONS", 500))
+# Tokens are compared as bytes (compare_digest refuses a non-ASCII str). Each comes with the
+# caller id used for rate limits and session shares; the id never reveals the token.
+_TOKENS = tuple((b, hashlib.sha256(b).hexdigest()[:16]) for b in
+                sorted(t.encode("utf-8", "surrogateescape") for t in API_TOKENS))
+
+# Every token gets an equal share of the session store, so one caller filling its share
+# replaces only its own oldest intake, never another caller's.
+_sessions = SessionStore(_int_env("SESSION_TTL_S", 1800), MAX_SESSIONS,
+                         max_per_owner=max(1, MAX_SESSIONS // max(1, len(API_TOKENS))))
 _hits: Dict[str, Deque[float]] = defaultdict(deque)
+# rate_limit is a sync dependency, so FastAPI runs it on a thread pool: one lock keeps the
+# check and the append together.
+_hits_lock = threading.Lock()
 
 _CODES = {400: "bad_request", 401: "unauthorized", 403: "forbidden", 404: "not_found",
           405: "method_not_allowed", 413: "body_too_large", 415: "unsupported_media_type",
@@ -85,13 +103,19 @@ class IntakeBody(BaseModel):
     notes: Optional[str] = Field(None, max_length=4000)
 
 
+def _one_of(choices: Any) -> str:
+    # The same values service.harden accepts: the engine compares exactly, so anything else
+    # would silently drop the strict_api gate.
+    return "^(" + "|".join(re.escape(c) for c in choices) + ")$"
+
+
 class ContractBody(BaseModel):
     language: Optional[str] = Field(None, max_length=40)
     target_runtime: str = Field("", max_length=80)
     threat_model: List[str] = Field(default_factory=list, max_length=len(THREAT_CHOICES))
-    compat: str = Field("strict_api", pattern="^(strict_api|allow_signature_changes|rewrite_freely)$")
-    dependencies: str = Field("stdlib_only", pattern="^(stdlib_only|existing_only|may_add)$")
-    error_policy: str = Field("fail_closed", pattern="^(fail_closed|preserve_current)$")
+    compat: str = Field(service.COMPAT_CHOICES[0], pattern=_one_of(service.COMPAT_CHOICES))
+    dependencies: str = Field(service.DEPENDENCY_CHOICES[0], pattern=_one_of(service.DEPENDENCY_CHOICES))
+    error_policy: str = Field(service.ERROR_POLICY_CHOICES[0], pattern=_one_of(service.ERROR_POLICY_CHOICES))
     output_style: str = Field("full_module", pattern="^(full_module|changed_parts)$")
     must_preserve: List[str] = Field(default_factory=list, max_length=200)
     notes: str = Field("", max_length=4000)
@@ -113,25 +137,30 @@ def require_auth(authorization: str = Header(default="")) -> str:
                                "refuses to serve (set ENVIRONMENT=dev to run an open local "
                                "instance).")
         return "dev"
-    token = authorization[7:] if authorization.startswith("Bearer ") else ""
-    for t in API_TOKENS:
-        if secrets.compare_digest(token, t):
-            return sha256(t)[:16]
+    try:
+        sent = authorization.encode("latin-1")   # ASGI hands header bytes over as latin-1
+    except UnicodeEncodeError:
+        sent = b""
+    token = sent[7:] if sent.startswith(b"Bearer ") else b""
+    for expected, caller in _TOKENS:
+        if secrets.compare_digest(token, expected):
+            return caller
     raise ServiceError(401, "unauthorized", "Invalid or missing bearer token.",
                        headers={"WWW-Authenticate": "Bearer"})
 
 
 def rate_limit(caller: str = Depends(require_auth)) -> str:
-    now = time.monotonic()
-    window = _hits[caller]
-    while window and now - window[0] > 60:
-        window.popleft()
-    if len(window) >= RATE_LIMIT_PER_MINUTE:
-        wait = max(1, int(60 - (now - window[0])) + 1)
-        raise ServiceError(429, "rate_limited", f"Rate limit of {RATE_LIMIT_PER_MINUTE} requests "
-                           f"per minute exceeded; retry in {wait} s.",
-                           headers={"Retry-After": str(wait)})
-    window.append(now)
+    with _hits_lock:
+        now = time.monotonic()
+        window = _hits[caller]
+        while window and now - window[0] > 60:
+            window.popleft()
+        if len(window) >= RATE_LIMIT_PER_MINUTE:
+            wait = max(1, int(60 - (now - window[0])) + 1)
+            raise ServiceError(429, "rate_limited", f"Rate limit of {RATE_LIMIT_PER_MINUTE} requests "
+                               f"per minute exceeded; retry in {wait} s.",
+                               headers={"Retry-After": str(wait)})
+        window.append(now)
     return caller
 
 
@@ -219,14 +248,27 @@ async def _validation_error(_request: Request, exc: RequestValidationError) -> J
     return _error(422, "bad_request", f"{where}: {message}" if where else message)
 
 
+_SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+                     "Referrer-Policy": "no-referrer"}
+
+
+@app.exception_handler(Exception)
+async def _unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    # The traceback goes to the server log only; the caller gets the documented shape and
+    # nothing about the cause. This response bypasses _headers, so it sets them itself.
+    request_id = getattr(request.state, "request_id", None) or secrets.token_hex(12)
+    _log.error("Unhandled error on %s %r (request %s)", request.method, request.url.path,
+               request_id, exc_info=exc)
+    return _error(500, "internal_error", "Internal error; the request was not completed.",
+                  {**_SECURITY_HEADERS, "X-Request-ID": request_id, "Cache-Control": "no-store"})
+
+
 @app.middleware("http")
 async def _headers(request: Request, call_next: Any) -> Response:
     request_id = secrets.token_hex(12)
+    request.state.request_id = request_id
     response = await call_next(request)
-    response.headers.update({"X-Request-ID": request_id,
-                             "X-Content-Type-Options": "nosniff",
-                             "X-Frame-Options": "DENY",
-                             "Referrer-Policy": "no-referrer"})
+    response.headers.update({"X-Request-ID": request_id, **_SECURITY_HEADERS})
     response.headers.setdefault("Cache-Control", "no-store")
     return response
 
@@ -260,7 +302,7 @@ async def verify_batch(request: Request, caller: str = Depends(rate_limit)) -> d
 async def intake(body: IntakeBody, caller: str = Depends(rate_limit)) -> dict:
     detection = detect_language(body.code, body.language)
     surface = python_surface(body.code) if detection.language == "python" else None
-    session_id = await _sessions.put(Session(body.code, detection, time.time()))
+    session_id = await _sessions.put(Session(body.code, detection, time.time()), owner=caller)
     return {
         "session_id": session_id, "issued_at": utc_now(),
         "detected": {"language": detection.language, "display": detection.display,

@@ -2461,23 +2461,43 @@ class Session:
 
 
 class SessionStore:
-    def __init__(self, ttl_s: int = 1800, max_entries: int = 500) -> None:
-        self._ttl, self._max = ttl_s, max_entries
+    """Single-use sessions with a time limit and a size cap. Each session has an owner (an
+    API caller). An owner at max_per_owner replaces its own oldest session; when the whole
+    store is full, the owner holding the most sessions gives up its oldest."""
+
+    def __init__(self, ttl_s: int = 1800, max_entries: int = 500,
+                 max_per_owner: Optional[int] = None) -> None:
+        self._ttl, self._max, self._per_owner = ttl_s, max_entries, max_per_owner
         self._data: Dict[str, Session] = {}
+        self._owner: Dict[str, str] = {}
         self._lock = asyncio.Lock()
+
+    def _drop(self, key: str) -> Optional[Session]:
+        self._owner.pop(key, None)
+        return self._data.pop(key, None)
+
+    def _drop_oldest(self, keys: List[str]) -> None:
+        if keys:
+            self._drop(min(keys, key=lambda k: self._data[k].created))
 
     def _purge(self) -> None:
         cutoff = time.time() - self._ttl
         for key in [k for k, v in self._data.items() if v.created < cutoff]:
-            self._data.pop(key, None)
+            self._drop(key)
 
-    async def put(self, session: Session) -> str:
+    async def put(self, session: Session, owner: str = "") -> str:
         async with self._lock:
             self._purge()
-            if len(self._data) >= self._max:
-                self._data.pop(min(self._data, key=lambda k: self._data[k].created), None)
+            mine = [k for k, o in self._owner.items() if o == owner]
+            if self._per_owner is not None and len(mine) >= self._per_owner:
+                self._drop_oldest(mine)
+            elif len(self._data) >= self._max:
+                held = Counter(self._owner.values())
+                most = max(held.values())
+                self._drop_oldest([k for k, o in self._owner.items() if held[o] == most])
             token = secrets.token_urlsafe(24)
             self._data[token] = session
+            self._owner[token] = owner
             return token
 
     async def get(self, token: str) -> Optional[Session]:
@@ -2489,7 +2509,7 @@ class SessionStore:
         """Single-use retrieval: each paid model call needs a fresh intake."""
         async with self._lock:
             self._purge()
-            return self._data.pop(token, None)
+            return self._drop(token)
 
 
 # ===========================================================================
