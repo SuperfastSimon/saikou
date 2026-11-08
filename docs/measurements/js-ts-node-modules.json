@@ -1,4 +1,10 @@
 {
+  "produced_by": {
+    "engine_version": null,
+    "commit": null,
+    "date": null,
+    "note": "Not recorded when this was measured. The file was first committed in 65ecbc4 (2026-10-08), where the engine is version 1.1.0, so it was measured with that engine or an earlier one. Not measured again since: the corpus (see README, 'Measured on code nobody wrote for it') is not on the machine where the metadata was added (2026-11-08). The numbers below are the original ones."
+  },
   "javascript": {
     "files": 826,
     "gating_false_block_rate": 0.0,

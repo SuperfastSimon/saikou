@@ -13,6 +13,11 @@ Two numbers per language, never merged:
    here are by design (a new eval/shell=True/literal secret is flagged), so this
    is not a false-positive rate - it shows how often real, reviewed code would
    need an explicit decision if it arrived as new code.
+
+The JSON report starts with "produced_by": the engine version, the commit and the
+tree of saikou/ it was measured with (and whether saikou/ had uncommitted
+changes), the date (UTC) and the Python version. Corpus paths are not recorded,
+and example files are given relative to the folder they were found in.
 """
 
 from __future__ import annotations
@@ -20,13 +25,39 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
+import subprocess
 import sys
 from collections import Counter
-from typing import Dict, List
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, REPO)
 
-from saikou.engine import Severity, language_for_path, scan_transformation
+from saikou.engine import Severity, __version__, language_for_path, scan_transformation
+
+
+def _git(*args: str) -> Optional[str]:
+    try:
+        proc = subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def produced_by() -> dict:
+    """Which engine produced a report, so a reader can tell whether it still applies."""
+    status = _git("status", "--porcelain", "--", "saikou")
+    return {
+        "engine_version": __version__,
+        "commit": _git("rev-parse", "HEAD"),
+        "engine_tree": _git("rev-parse", "HEAD:saikou"),
+        "engine_modified": None if status is None else bool(status),
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "python": platform.python_version(),
+    }
 
 PROBE = {
     "python": "\n\ndef _saikou_probe():\n    return 1\n",
@@ -59,13 +90,13 @@ def hard(findings) -> List[str]:
     return [f.check for f in findings if f.severity is Severity.HARD_FAIL]
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("dirs", nargs="+")
     ap.add_argument("--json")
     ap.add_argument("--nested", action="store_true",
                     help="descend into site-packages-like subfolders")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     stats: Dict[str, Dict] = {}
     for root in args.dirs:
@@ -87,13 +118,14 @@ def main() -> int:
                 s["gating_blocked"] += 1
                 s["gating_checks"].update(gate)
                 if len(s["gating_examples"]) < 10:
-                    s["gating_examples"].append({"file": path, "checks": sorted(set(gate))})
+                    rel = os.path.relpath(path, root).replace("\\", "/")
+                    s["gating_examples"].append({"file": rel, "checks": sorted(set(gate))})
             new = hard(scan_transformation("", code, language=lang, expect_change=False))
             if new:
                 s["newfile_blocked"] += 1
                 s["newfile_checks"].update(set(new))
 
-    report = {}
+    report: Dict[str, Dict] = {"produced_by": produced_by()}
     for lang, s in sorted(stats.items()):
         n = s["files"]
         report[lang] = {
@@ -112,7 +144,7 @@ def main() -> int:
         for check, count in s["newfile_checks"].most_common(6):
             print(f"    newfile {check}: {count} file(s)")
     if args.json:
-        with open(args.json, "w", encoding="utf-8") as fh:
+        with open(args.json, "w", encoding="utf-8", newline="\n") as fh:
             json.dump(report, fh, indent=2)
     return 0
 

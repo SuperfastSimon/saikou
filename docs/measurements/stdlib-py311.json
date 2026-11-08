@@ -1,4 +1,12 @@
 {
+  "produced_by": {
+    "engine_version": "1.2.0",
+    "commit": "39bec5e873f119a22073bfc0338c731441042da0",
+    "engine_tree": "cb3055e73e68eee1cd8eaaad49d7f685b10e5eeb",
+    "engine_modified": false,
+    "date": "2026-11-08",
+    "python": "3.11.9"
+  },
   "python": {
     "files": 600,
     "gating_false_block_rate": 0.0,
