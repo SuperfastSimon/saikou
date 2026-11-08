@@ -18,6 +18,7 @@ from .engine import (
     Tier,
     checks_run,
     diff_python_surface,
+    language_for_file,
     language_for_path,
     normalise_language,
     normalise_threats,
@@ -128,8 +129,9 @@ def verify_pair(before: str, after: str, *, path: str, language: Optional[str] =
                 must_preserve: Sequence[str] = (), expect_change: bool = True,
                 run_tools: bool = False, warn_only: Iterable[str] = (),
                 change: str = "verify") -> FileReport:
-    """Verify one before/after pair and return a report (no score, ever)."""
-    lang = normalise_language(language) if language else language_for_path(path)
+    """Verify one before/after pair and return a report (no score, ever). Without
+    `language`, the extension decides, else the `#!` line of `after`, else that of `before`."""
+    lang = normalise_language(language) if language else language_for_file(path, after, before)
     _, tier = LANGUAGES[lang]
     claimed = normalise_threats(claimed_threats)
     findings = scan_transformation(before, after, language=lang, claimed_threats=claimed,
@@ -357,6 +359,7 @@ class ChangedFile:
     before: Optional[str]    # None (both sides) when the new content could not be checked
     after: Optional[str]
     unreadable: str = ""     # why not; such a file is reported with unreadable_report()
+    language: str = ""       # from the extension or the `#!` line ("" = not determined)
 
 
 def unreadable_report(cf: ChangedFile, warn_only: Iterable[str] = ()) -> FileReport:
@@ -365,7 +368,8 @@ def unreadable_report(cf: ChangedFile, warn_only: Iterable[str] = ()) -> FileRep
     It blocks rather than being skipped: one NUL byte in a comment, padding past the size
     limit, or a symlink in place of the file used to let the change through unchecked. The
     tier is `asserted`, because nothing was parsed."""
-    lang = "config" if is_analyser_config(cf.path) else language_for_path(cf.path)
+    lang = ("config" if is_analyser_config(cf.path)
+            else cf.language or language_for_path(cf.path))
     what = "file" if lang == "unknown" else f"{lang} file"
     findings = [Finding(
         "content_not_checked", Severity.HARD_FAIL,
@@ -385,12 +389,15 @@ def changed_files(base: str, *, head: Optional[str] = None, staged: bool = False
 
     Returns (resolved base sha, files, notes). With `merge_base` the comparison starts at
     the merge base, which is what a pull request shows. Deleted files are skipped: there is
-    nothing left to verify. A file in a checked language or an analyser config file (any
-    file with `include_unknown`) whose new content cannot be checked - not text, over the
-    size limit, unreadable, or now a symlink or submodule - is returned with `unreadable`
-    set and no content, so the caller reports it as blocking; other such files are skipped
-    with a note. When only the old version is not text, the new one is checked as if the
-    file were new, so everything in it counts as introduced.
+    nothing left to verify. The language comes from the extension or, when that is not
+    recognised, from the `#!` line of the new version, else of the old one (an executable
+    script without an extension); it is returned in `language`. A file in a checked
+    language or an analyser config file (any file with `include_unknown`) whose new content
+    cannot be checked - not text, over the size limit, unreadable, or now a symlink or
+    submodule - is returned with `unreadable` set and no content, so the caller reports it
+    as blocking; other such files are skipped with a note. When only the old version is not
+    text, the new one is checked as if the file were new, so everything in it counts as
+    introduced.
     """
     ref = (head or "HEAD") if merge_base else base
     base_sha = _git(["rev-parse", "--verify", base + "^{commit}"], cwd).decode().strip()
@@ -418,16 +425,18 @@ def changed_files(base: str, *, head: Optional[str] = None, staged: bool = False
     notes: List[str] = []
     for old_mode, new_mode, status, path in entries:
         change = "added" if status == "A" else "modified"
-        checked = include_unknown or language_for_path(path) != "unknown" or is_analyser_config(path)
+        before_bytes = (b"" if status == "A" or old_mode not in _REGULAR
+                        else _git(["show", f"{base_sha}:{path}"], cwd))
+        always = include_unknown or is_analyser_config(path)
         if new_mode not in _REGULAR:
             kind = "a symbolic link" if new_mode == "120000" else "a submodule"
-            if checked:
-                files.append(ChangedFile(path, change, None, None, f"the path is now {kind}"))
+            lang = language_for_file(path, before_bytes)
+            if always or lang != "unknown":
+                files.append(ChangedFile(path, change, None, None, f"the path is now {kind}",
+                                         language=lang))
             else:
                 notes.append(f"{path}: {kind}, not a file")
             continue
-        before_bytes = (b"" if status == "A" or old_mode not in _REGULAR
-                        else _git(["show", f"{base_sha}:{path}"], cwd))
         if head:
             after_bytes = _git(["show", f"{head}:{path}"], cwd)
         elif staged:
@@ -438,16 +447,22 @@ def changed_files(base: str, *, head: Optional[str] = None, staged: bool = False
                 with open(f"{root}/{path}", "rb") as fh:
                     after_bytes = fh.read()
             except OSError:
-                if checked:
-                    files.append(ChangedFile(path, change, None, None, "unreadable in the work tree"))
+                lang = language_for_file(path, before_bytes)
+                if always or lang != "unknown":
+                    files.append(ChangedFile(path, change, None, None,
+                                             "unreadable in the work tree", language=lang))
                 else:
                     notes.append(f"{path}: unreadable in the work tree")
                 continue
+        # The `#!` line is read from the raw bytes, as the kernel does, so a NUL byte further
+        # down or padding past the size limit cannot make a script look unknown.
+        lang = language_for_file(path, after_bytes, before_bytes)
         after_text = _decode(after_bytes)
         if after_text is None:
-            if checked:
+            if always or lang != "unknown":
                 files.append(ChangedFile(path, change, None, None,
-                                         f"the new version has {_not_text(after_bytes)}"))
+                                         f"the new version has {_not_text(after_bytes)}",
+                                         language=lang))
             else:
                 notes.append(f"{path}: binary or larger than {MAX_FILE_BYTES} bytes")
             continue
@@ -456,5 +471,5 @@ def changed_files(base: str, *, head: Optional[str] = None, staged: bool = False
             notes.append(f"{path}: the old version has {_not_text(before_bytes)}; the new "
                          "version was checked as if the file were new")
             before_text = ""
-        files.append(ChangedFile(path, change, before_text, after_text))
+        files.append(ChangedFile(path, change, before_text, after_text, language=lang))
     return base_sha, files, notes

@@ -25,7 +25,7 @@ from .engine import (
     __version__,
     _selftest,
     detect_language,
-    language_for_path,
+    language_for_file,
     normalise_language,
     normalise_threats,
 )
@@ -185,7 +185,8 @@ def cmd_diff(args: argparse.Namespace) -> int:
             reports.append(config_weakening(cf.path, cf.before, cf.after, cf.change))
             continue
         report = verify_pair(
-            cf.before, cf.after, path=cf.path, claimed_threats=_threats(args.claimed_threats),
+            cf.before, cf.after, path=cf.path, language=cf.language or None,
+            claimed_threats=_threats(args.claimed_threats),
             strict_api=args.strict_api, must_preserve=_csv(args.must_preserve),
             expect_change=False, run_tools=args.analyser, warn_only=_csv(args.warn_only),
             change=cf.change)
@@ -219,9 +220,11 @@ def cmd_harden(args: argparse.Namespace) -> int:
     contract = Contract(threat_model=_threats(args.threat), compat=args.compat,
                         dependencies=args.dependencies, error_policy=args.error_policy,
                         must_preserve=_csv(args.must_preserve), notes=args.notes or "")
-    # Language from --language, else the file extension, else a content guess. (Passing the
-    # raw path used to resolve to "unknown", which silently skipped every Python check.)
-    language = normalise_language(args.language) if args.language else language_for_path(args.file)
+    # Language from --language, else the file extension or `#!` line, else a content guess.
+    # (Passing the raw path used to resolve to "unknown", which silently skipped every Python
+    # check.)
+    language = (normalise_language(args.language) if args.language
+                else language_for_file(args.file, code))
     if language == "unknown":
         language = detect_language(code).language
     try:                                  # check the endpoint before naming it
@@ -328,7 +331,8 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--no-merge-base", action="store_true",
                    help="compare against BASE itself instead of the merge base")
     d.add_argument("--include-unknown", action="store_true",
-                   help="also check files whose language is not recognised")
+                   help="also check files whose language is not recognised (by extension, "
+                        "or by the #! line of a script without one)")
     d.add_argument("paths", nargs="*", help="limit to these paths")
     common(d)
     d.set_defaults(func=cmd_diff)

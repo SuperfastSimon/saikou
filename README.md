@@ -48,6 +48,11 @@ Verification strength depends on the language, and every report says which tier 
 **`ast_verified`** (Python: parsed, API and sinks computed), **`structural`**
 (JavaScript/TypeScript guard checks, textual checks for Go, Java, C#, PHP, Ruby, Rust,
 C/C++, Kotlin, Swift, shell, SQL), **`asserted`** (unrecognised: sanity checks only).
+The language comes from the file extension; for a script without a recognised extension it
+comes from the `#!` line, when that names an interpreter of a checked language (for example
+`python3`, `node`, `bash` or `sh`; the full list is `_SHEBANG_INTERPRETERS` in
+`saikou/engine.py`). `saikou diff` skips other unrecognised files and lists them, unless
+`--include-unknown` is given.
 
 ## Two modes
 

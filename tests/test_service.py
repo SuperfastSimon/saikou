@@ -85,6 +85,19 @@ def test_batch_mixes_files_and_skips_unknown_languages():
     assert out["skipped"] == ["README.md: language not recognised"]
 
 
+def test_batch_and_verify_read_the_language_of_a_script_from_its_shebang():
+    script = "#!/usr/bin/env python3\n" + FAKE_AFTER
+    out = service.verify_batch({"files": [
+        {"path": "bin/deploy", "before": "#!/usr/bin/env python3\n" + FAKE_BEFORE, "after": script},
+        {"path": "bin/report", "before": "#!/usr/bin/perl\n", "after": "#!/usr/bin/perl\n1;\n"},
+    ]})
+    assert [(f["path"], f["language"]) for f in out["files"]] == [("bin/deploy", "python")]
+    assert out["blocked"] is True and out["skipped"] == ["bin/report: language not recognised"]
+    one = service.verify({"path": "deploy", "before": "#!/bin/sh\necho a\n",
+                          "after": "#!/bin/sh\necho b\n"})
+    assert one["files"][0]["language"] == "shell"
+
+
 def test_batch_limits():
     assert _codes(service.verify_batch, {"files": []}) == (422, "missing_field")
     many = {"files": [{"path": f"f{i}.py", "after": "x = 1\n"} for i in range(3)]}
@@ -156,6 +169,8 @@ def test_read_file(tmp_path):
     (tmp_path / "a.py").write_text("x = 1\n")
     (tmp_path / "b.bin").write_bytes(bytes([0, 1, 2, 3]))
     assert service.read_file({"path": str(tmp_path / "a.py")})["language"] == "python"
+    (tmp_path / "deploy").write_text("#!/usr/bin/env node\nconsole.log(1)\n")
+    assert service.read_file({"path": str(tmp_path / "deploy")})["language"] == "javascript"
     assert _codes(service.read_file, {"path": str(tmp_path / "b.bin")}) == (422, "binary")
     assert _codes(service.read_file, {"path": str(tmp_path / "nope.py")}) == (404, "not_found")
 
@@ -440,6 +455,13 @@ def test_git_diff_gates_working_tree(tmp_path):
     assert [f["check"] for f in out["files"][0]["findings"]] == ["content_not_checked"]
     out = service.git_diff({"repo": str(tmp_path), "base": "HEAD", "warn_only": ["content_not_checked"]})
     assert out["blocked"] is False
+    # An executable script without an extension is checked by its #! line, not skipped.
+    (tmp_path / "svc.py").write_text(FAKE_BEFORE)
+    (tmp_path / "deploy").write_text("#!/usr/bin/env python3\n" + FAKE_AFTER)
+    git("add", "deploy")
+    out = service.git_diff({"repo": str(tmp_path), "base": "HEAD"})
+    assert out["blocked"] is True and out["skipped"] == []
+    assert [(f["path"], f["language"]) for f in out["files"]] == [("deploy", "python")]
 
 
 def test_harden_write_keeps_crlf_files_crlf(tmp_path, monkeypatch):

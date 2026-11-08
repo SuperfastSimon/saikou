@@ -248,7 +248,8 @@ def test_utf16_with_a_bom_is_checked_as_text(repo, capsys):
 
 @needs_git
 def test_include_unknown_also_blocks_an_unreadable_unknown_file(repo, capsys):
-    (repo / "deploy").write_bytes(b"#!/usr/bin/env python\n# \x00\nimport os\n")
+    # perl is not a language Saikou checks, so without --include-unknown this is skipped.
+    (repo / "deploy").write_bytes(b"#!/usr/bin/perl\n# \x00\nprint 1;\n")
     _git(repo, "add", "deploy")
     assert main(["diff", "--base", "HEAD"]) == EXIT_OK
     assert main(["diff", "--base", "HEAD", "--include-unknown"]) == EXIT_BLOCKED
@@ -292,3 +293,88 @@ def test_binary_file_in_an_unchecked_language_is_still_skipped(repo, capsys):
     _git(repo, "add", "logo.png")
     assert main(["diff", "--base", "HEAD"]) == EXIT_OK
     assert "logo.png: binary or larger than" in capsys.readouterr().out
+
+
+# ---- an executable script without an extension: the #! line names the language ---------------
+
+PY_EVASION = "import subprocess\nsubprocess.call(c, shell=True)  # nosec\n"
+SH_EVASION = "curl \"$URL\" | sh  # nosemgrep\n"
+
+
+def _diff_json(capsys, *extra: str) -> dict:
+    capsys.readouterr()
+    main(["diff", "--base", "HEAD", "--format", "json", *extra])
+    return json.loads(capsys.readouterr().out)
+
+
+@needs_git
+@pytest.mark.parametrize("shebang, body, language", [
+    ("#!/usr/bin/env python", PY_EVASION, "python"),
+    ("#!/usr/bin/python3", PY_EVASION, "python"),
+    ("#!/usr/bin/env -S python3.12 -u", PY_EVASION, "python"),
+    ("#! /usr/bin/env node", EVASION_JS, "javascript"),
+    ("#!/bin/bash", SH_EVASION, "shell"),
+    ("#!/bin/sh", SH_EVASION, "shell"),
+])
+def test_diff_checks_a_script_without_an_extension(repo, capsys, shebang, body, language):
+    # It used to be skipped as "language not recognised" unless --include-unknown was given.
+    (repo / "deploy").write_text(f"{shebang}\n{body}")
+    _git(repo, "add", "deploy")
+    assert main(["diff", "--base", "HEAD"]) == EXIT_BLOCKED
+    (report,) = _diff_json(capsys)["files"]
+    assert report["path"] == "deploy" and report["language"] == language
+    assert "suppression_introduced" in [f["check"] for f in report["findings"]]
+
+
+@needs_git
+def test_diff_checks_a_modified_script_and_one_that_lost_its_shebang(repo, capsys):
+    (repo / "deploy").write_text("#!/usr/bin/env python3\nimport subprocess\n")
+    _git(repo, "add", "deploy")
+    _git(repo, "commit", "-q", "-m", "script")
+    (repo / "deploy").write_text("#!/usr/bin/env python3\n" + PY_EVASION)
+    assert main(["diff", "--base", "HEAD"]) == EXIT_BLOCKED
+    capsys.readouterr()
+    # Dropping the #! line in the same change does not take the file out of the check.
+    (repo / "deploy").write_text(PY_EVASION)
+    (report,) = _diff_json(capsys)["files"]
+    assert report["language"] == "python" and report["blocked"] is True
+
+
+@needs_git
+def test_a_clean_script_passes_and_an_unchecked_interpreter_is_still_skipped(repo, capsys):
+    (repo / "deploy").write_text("#!/usr/bin/env python3\nprint('deploying')\n")
+    (repo / "report").write_text("#!/usr/bin/env perl\nprint 1;  # nosec\n")
+    (repo / "notes").write_text("no #! line here  # nosec\n")
+    _git(repo, "add", "deploy", "report", "notes")
+    assert main(["diff", "--base", "HEAD"]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "ok      deploy  [python" in out
+    assert "report: language not recognised" in out and "notes: language not recognised" in out
+
+
+@needs_git
+def test_a_script_with_a_nul_byte_or_over_the_limit_blocks_without_include_unknown(repo, capsys):
+    # The #! line comes from the raw bytes, so the finding 22 rule holds for scripts too.
+    (repo / "deploy").write_bytes(b"#!/usr/bin/env node\n/* \x00 */\n" + EVASION_JS.encode())
+    (repo / "build").write_text("#!/bin/sh\n" + "# padding\n" * 120_000)
+    # The kernel ends the interpreter name at a NUL, and node skips the whole #! line.
+    (repo / "run").write_bytes(b"#!/usr/bin/env node\x00\n" + EVASION_JS.encode())
+    _git(repo, "add", "deploy", "build", "run")
+    assert main(["diff", "--base", "HEAD"]) == EXIT_BLOCKED
+    reports = {r["path"]: r for r in _diff_json(capsys)["files"]}
+    assert set(reports) == {"deploy", "build", "run"}
+    assert reports["deploy"]["language"] == reports["run"]["language"] == "javascript"
+    assert reports["build"]["language"] == "shell"
+    assert all([f["check"] for f in r["findings"]] == ["content_not_checked"]
+               for r in reports.values())
+
+
+@needs_git
+def test_a_script_path_that_becomes_a_symlink_blocks(repo, capsys):
+    (repo / "deploy").write_text("#!/usr/bin/env python3\nprint('x')\n")
+    _git(repo, "add", "deploy")
+    _git(repo, "commit", "-q", "-m", "script")
+    _git(repo, "rm", "-q", "--cached", "deploy")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{_blob(repo, b'app.py')},deploy")
+    assert main(["diff", "--base", "HEAD", "--staged"]) == EXIT_BLOCKED
+    assert "now a symbolic link" in capsys.readouterr().out

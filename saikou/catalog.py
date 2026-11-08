@@ -107,7 +107,8 @@ _c("linter_config_relaxed", "mechanical", "warn", "config", "gate",
 # ---- completeness -----------------------------------------------------------------------
 _c("content_not_checked", "mechanical", "hard", "all", "gate",
    _t("Changed file could not be checked", "Gewijzigd bestand kon niet worden gecontroleerd"),
-   _t("The new version of a changed file in a language Saikou checks, or of an analyser "
+   _t("The new version of a changed file in a language Saikou checks (by its extension or, "
+      "for a script without a recognised one, by its #! line), or of an analyser "
       "configuration file, could not be checked: it has a NUL byte in its first 8 KB (UTF-16 "
       "and UTF-32 with a byte-order mark are read as text), it is larger than 1,000,000 bytes, "
       "it could not be read from the work tree, or the path is now a symbolic link or a "
@@ -118,7 +119,8 @@ _c("content_not_checked", "mechanical", "hard", "all", "gate",
       "as a large vendored bundle, can be left out with a pathspec "
       "(-- . ':(exclude)vendor/bundle.js'); --warn-only content_not_checked demotes the check "
       "for every file. Files in languages Saikou does not check are still skipped and listed.",
-      "De nieuwe versie van een gewijzigd bestand in een taal die Saikou controleert, of van "
+      "De nieuwe versie van een gewijzigd bestand in een taal die Saikou controleert (volgens "
+      "de extensie of, bij een script zonder herkende extensie, volgens de #!-regel), of van "
       "een configuratiebestand van een analyzer, kon niet worden gecontroleerd: er staat een "
       "NUL-byte in de eerste 8 KB (UTF-16 en UTF-32 met een byte-order mark worden als tekst "
       "gelezen), het is groter dan 1.000.000 bytes, het kon niet uit de werkmap worden "

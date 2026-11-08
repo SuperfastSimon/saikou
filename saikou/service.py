@@ -31,7 +31,7 @@ from .engine import (
     Contract,
     __version__,
     detect_language,
-    language_for_path,
+    language_for_file,
     normalise_language,
     normalise_threats,
 )
@@ -156,7 +156,7 @@ def _threats(body: dict) -> List[str]:
     return mapped
 
 
-def _resolve_language(body: dict, path: str, code: str) -> str:
+def _resolve_language(body: dict, path: str, code: str, old: str = "") -> str:
     explicit = body.get("language")
     if explicit:
         if not isinstance(explicit, str):
@@ -166,7 +166,7 @@ def _resolve_language(body: dict, path: str, code: str) -> str:
             raise ServiceError(422, "bad_field", f"Unknown language {explicit!r}. Known: "
                                + ", ".join(sorted(k for k in LANGUAGES if k != "unknown")))
         return lang
-    lang = language_for_path(path)
+    lang = language_for_file(path, code, old)
     return lang if lang != "unknown" else detect_language(code).language
 
 
@@ -231,7 +231,7 @@ def _one(body: dict, limits: Limits, mode: str, *,
     path = _str(body, "path", max_len=300, default=path_default) or path_default
     before = _str(body, "before", max_len=limits.max_chars)
     after = _str(body, "after", max_len=limits.max_chars, required=True)
-    lang = _resolve_language(body, path, after or before)
+    lang = _resolve_language(body, path, after or before, before)
     use_analyser = _bool(body, "analyser")
     if mode == "gate" and is_analyser_config(path):
         return functools.partial(config_weakening, path, before, after,
@@ -284,7 +284,7 @@ def verify_batch(body: Any, limits: Optional[Limits] = None) -> dict:
             raise ServiceError(413, "too_large", f"Total input exceeds {limits.max_total_chars} characters.")
         merged = {**common, **item}
         path = _str(merged, "path", max_len=300, required=True)
-        lang = language_for_path(path)
+        lang = language_for_file(path, merged.get("after"), merged.get("before"))
         if lang == "unknown" and not is_analyser_config(path) and not merged.get("language"):
             skipped.append(f"{path}: language not recognised")
             continue
@@ -342,7 +342,7 @@ def git_diff(body: Any, limits: Optional[Limits] = None) -> dict:
         if is_analyser_config(cf.path):
             reports.append(config_weakening(cf.path, cf.before, cf.after, cf.change))
             continue
-        lang = language_for_path(cf.path)
+        lang = cf.language or "unknown"
         if lang == "unknown":
             skipped.append(f"{cf.path}: language not recognised")
             continue
@@ -562,4 +562,4 @@ def read_file(body: Any) -> dict:
     text = _utf8(raw)
     if len(text) > limits.max_chars:
         raise ServiceError(413, "too_large", f"File has {len(text)} characters; the limit is {limits.max_chars}.")
-    return {"path": path, "content": text, "language": language_for_path(path)}
+    return {"path": path, "content": text, "language": language_for_file(path, text)}

@@ -656,6 +656,46 @@ def test_gating_a_new_empty_file_is_not_blocked():
     assert "empty_output" in [f.check for f in strict]
 
 
+# ---- language of a script without an extension, from its #! line ------------------------
+
+@pytest.mark.parametrize("first_line, language", [
+    ("#!/usr/bin/env python", "python"),
+    ("#!/usr/bin/env python3", "python"),
+    ("#!/usr/local/bin/python3.12 -u", "python"),
+    ("#!/usr/bin/env -S python3 -X utf8", "python"),
+    ("#!/usr/bin/env -u PYTHONPATH LANG=C python3", "python"),
+    ("#!/usr/bin/pypy3", "python"),
+    ("#! /usr/bin/env node", "javascript"),
+    ("#!/usr/bin/env nodejs", "javascript"),
+    ("#!/usr/bin/env -S deno run --allow-net", "javascript"),
+    ("#!/usr/bin/env ts-node", "typescript"),
+    ("#!/bin/bash", "shell"),
+    ("#!/bin/sh -e", "shell"),
+    ("#!/usr/bin/env zsh", "shell"),
+    ("#!/usr/bin/env ruby", "ruby"),
+    ("#!/usr/bin/php8.2", "php"),
+    ("#!/usr/bin/perl", "unknown"),
+    ("#!/usr/bin/env", "unknown"),
+    ("#!", "unknown"),
+    ("# not a shebang", "unknown"),
+    ("\ufeff#!/usr/bin/env python", "unknown"),   # the kernel needs #! as the first bytes
+    (" #!/usr/bin/env python", "unknown"),
+])
+def test_language_from_shebang(first_line, language):
+    assert engine.language_from_shebang(first_line + "\nrest\n") == language
+    assert engine.language_from_shebang((first_line + "\r\nrest\n").encode()) == language
+
+
+def test_language_for_file_prefers_the_extension_then_the_new_shebang():
+    py, sh = "#!/usr/bin/env python3\n", "#!/bin/sh\n"
+    assert engine.language_for_file("tool.sh", py) == "shell"
+    assert engine.language_for_file("bin/deploy", py, sh) == "python"
+    assert engine.language_for_file("bin/deploy", "x\n", sh) == "shell"
+    assert engine.language_for_file("bin/deploy", "x\n", "") == "unknown"
+    assert engine.language_for_file("deploy.cgi", py) == "python"
+    assert engine.language_for_file("deploy", None, 42, b"#!/bin/sh\x00") == "shell"
+
+
 # ---- code that nests too deeply to parse or analyse (finding 8) --------------------------
 
 # 40,004 characters: under the hosted API's 60,000, and too deep for ast.parse on 3.11-3.13.

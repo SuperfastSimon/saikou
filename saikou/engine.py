@@ -271,6 +271,64 @@ def language_for_path(path: str) -> str:
     return _EXTENSIONS.get(name.rsplit(".", 1)[-1].lower(), "unknown")
 
 
+# Interpreters a `#!` line can name, for languages Saikou checks. Anything else (perl, awk,
+# make, ...) stays "unknown". A version suffix is ignored: python3.12, pypy3, php8.2.
+_SHEBANG_INTERPRETERS = {
+    "python": "python", "pypy": "python",
+    "node": "javascript", "nodejs": "javascript", "bun": "javascript", "deno": "javascript",
+    "ts-node": "typescript", "tsx": "typescript",
+    "sh": "shell", "bash": "shell", "zsh": "shell", "dash": "shell", "ksh": "shell",
+    "mksh": "shell", "ash": "shell",
+    "ruby": "ruby", "php": "php", "swift": "swift",
+}
+_ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir"}
+
+
+def language_from_shebang(content: Any) -> str:
+    """Language key from the `#!` line that opens `content` (text or bytes); "unknown" when
+    there is none or it names an interpreter Saikou does not check. Only the first line
+    counts, and only when `#!` are its first two characters, as for the kernel, which also
+    ends a word at a NUL byte (`#!/usr/bin/env node` + NUL still runs node)."""
+    if isinstance(content, bytes):
+        first = content[:512].split(b"\n", 1)[0].decode("utf-8", "replace")
+    elif isinstance(content, str):
+        first = content[:512].split("\n", 1)[0]
+    else:
+        return "unknown"
+    if not first.startswith("#!"):
+        return "unknown"
+    words = first[2:].replace("\x00", " ").split()
+    if not words:
+        return "unknown"
+    program = re.split(r"[\\/]", words[0])[-1].lower()
+    if program in ("env", "env.exe"):
+        rest = iter(words[1:])
+        program = ""
+        for word in rest:
+            if word in _ENV_OPTIONS_WITH_VALUE:
+                next(rest, None)
+            elif not word.startswith("-") and "=" not in word:
+                program = re.split(r"[\\/]", word)[-1].lower()
+                break
+    if program.endswith(".exe"):
+        program = program[:-4]
+    return _SHEBANG_INTERPRETERS.get(re.sub(r"[\d.]+$", "", program), "unknown")
+
+
+def language_for_file(path: str, *contents: Any) -> str:
+    """Language key from the extension or, when that is not recognised, from the `#!` line
+    of the first of `contents` (new version first, then old) that has a recognised one.
+    An executable script without an extension used to be "unknown" and skipped."""
+    language = language_for_path(path)
+    if language != "unknown":
+        return language
+    for content in contents:
+        language = language_from_shebang(content)
+        if language != "unknown":
+            return language
+    return "unknown"
+
+
 # ===========================================================================
 # 3. Evasion detection - runs before any evidence is credited
 # ===========================================================================
