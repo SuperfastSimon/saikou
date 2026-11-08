@@ -83,14 +83,20 @@ runs:
       with:
         python-version: "3.12"
 
+    # The working directory is the checked-out repository, which may hold its own saikou/,
+    # pip/ or sitecustomize.py (a pull request can add one). python -I (isolated mode) keeps
+    # the current folder, PYTHONPATH and the user site off the import path, and PYTHONPATH is
+    # unset for the tools started from here (bandit), so only the installed packages run.
     - if: steps.gate.outputs.skipped != 'true'
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
         ANALYSER: ${{ inputs.analyser }}
       run: |
-        python -m pip install --disable-pip-version-check --quiet "$ACTION_PATH"
-        if [ "$ANALYSER" = "true" ]; then python -m pip install --quiet "bandit>=1.7.3"; fi
+        unset PYTHONPATH
+        python -I -m pip install --disable-pip-version-check --quiet "$ACTION_PATH"
+        if [ "$ANALYSER" = "true" ]; then python -I -m pip install --disable-pip-version-check --quiet "bandit>=1.7.3"; fi
+        python -I -m saikou --version
         if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
           git fetch --no-tags --quiet --unshallow origin || true
         fi
@@ -108,6 +114,7 @@ runs:
         WARN_ONLY: ${{ inputs.warn-only }}
         ANALYSER: ${{ inputs.analyser }}
       run: |
+        unset PYTHONPATH
         base="${INPUT_BASE:-${PR_BASE:-$PUSH_BEFORE}}"
         if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
           base="$(git rev-parse HEAD~1)"
@@ -119,7 +126,7 @@ runs:
         if [ "$ANALYSER" = "true" ]; then args+=(--analyser); fi
         if [ -n "$PATHS" ]; then read -ra extra <<< "$PATHS"; args+=(-- "${extra[@]}"); fi
         set +e
-        saikou "${args[@]}"
+        python -I -m saikou "${args[@]}"
         code=$?
         set -e
         if [ "$code" -ge 2 ]; then echo "::error::saikou failed to run (exit $code)"; exit "$code"; fi

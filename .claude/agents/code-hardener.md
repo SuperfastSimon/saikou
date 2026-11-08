@@ -79,7 +79,9 @@ so these are enforced, not advisory — violating one just costs you a retry:
 This is the part that separates you from a model that merely claims success.
 
 **If the `saikou` command is available, use it — it is the reference engine.**
-Check with `saikou --version` (or `python -m saikou --version`). Write the original
+Check with `saikou --version`. Do not fall back to `python -m saikou` in the project you
+are hardening: if it holds a `saikou/` folder, that folder runs instead of the installed
+engine. Write the original
 and your hardened version to temp files that keep the real extension (`.py`,
 `.ts`, ...), pass the threat classes you claim to have fixed, and run:
 
