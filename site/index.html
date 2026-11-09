@@ -31,7 +31,7 @@
  "url": "https://saikou.tech/", "inLanguage": "en",
  "description": "Open-source verifier for AI-written security fixes: it compares code before and after a claimed fix and blocks changes that only look fixed, such as new analyser suppressions, unused sanitisers, partial fixes and elided code. No score.",
  "applicationCategory": "DeveloperApplication", "operatingSystem": "Windows, macOS, Linux",
- "softwareVersion": "1.2.0", "license": "https://www.apache.org/licenses/LICENSE-2.0",
+ "softwareVersion": "1.2.1", "license": "https://www.apache.org/licenses/LICENSE-2.0",
  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR"}}
 </script>
 <script src="assets/site-data.js" defer></script>
@@ -61,7 +61,7 @@
       <a class="btn" href="#use">Get started</a>
       <a class="btn ghost" href="tools/checker.html">Try it in your browser</a>
     </div>
-    <p class="meta">v<!--data:version-->1.2.0<!--/data--> &middot; Python 3.9+ &middot; standard library only &middot; runs on your machine &middot; Apache-2.0 &middot; no score</p>
+    <p class="meta">v<!--data:version-->1.2.1<!--/data--> &middot; Python 3.9+ &middot; standard library only &middot; runs on your machine &middot; Apache-2.0 &middot; no score</p>
   </div>
   <figure class="proof">
     <figcaption>One line of an AI "fix", from the demo below (<code><!--data:hero-file-->after_A_fake.py<!--/data--></code>):</figcaption>
@@ -229,7 +229,7 @@ saikou verify: 1 file(s), 0 blocked, 0 hard fail(s), 0 warning(s).<!--/demo--></
     only-agent-prs: "true"</pre><p>Findings appear in code scanning and the job summary. <code>only-agent-prs</code> checks only pull requests opened by bots or AI agents.</p></dd></div>
     <div><dt>pre-commit</dt><dd><pre tabindex="0" class="term">repos:
   - repo: https://github.com/SuperfastSimon/saikou
-    rev: v<!--data:version-->1.2.0<!--/data-->
+    rev: v<!--data:version-->1.2.1<!--/data-->
     hooks:
       - id: saikou</pre></dd></div>
     <div><dt>Claude Code plugin</dt><dd><pre tabindex="0" class="term">/plugin marketplace add SuperfastSimon/saikou

@@ -130,7 +130,7 @@ unreadable file with a real evasion through.
 ```yaml
 repos:
   - repo: https://github.com/SuperfastSimon/saikou
-    rev: v1.2.0
+    rev: v1.2.1
     hooks:
       - id: saikou
 ```

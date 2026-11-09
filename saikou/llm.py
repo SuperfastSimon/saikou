@@ -155,7 +155,7 @@ def load_env_file(path: str = ".env", allow: Iterable[str] = ()) -> List[str]:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
         if _is_endpoint_name(name) and value and name.upper() not in os.environ:
-            if value.rstrip("/") != _ENDPOINT_DEFAULTS[name.upper()]:
+            if value.rstrip("/").lower() != _ENDPOINT_DEFAULTS[name.upper()].lower():
                 _ENDPOINTS_IN_FILE[name.upper()] = path
         if name in names and value and name not in os.environ:
             os.environ[name] = value
@@ -378,7 +378,9 @@ def call_llm(messages: List[dict], schema: dict, config: LLMConfig) -> Dict[str,
         payload["response_format"] = {"type": "json_object"}
 
     body: Optional[dict] = None
-    for attempt in range(config.retries + 1):
+    # One pass more than the retries, for the switch to JSON mode below, which is not a retry.
+    # Only that switch can reach the extra pass: every other way out of the last attempt raises.
+    for attempt in range(config.retries + 2):
         try:
             body = _post(url, payload, config.api_key, config.timeout_s)
             break

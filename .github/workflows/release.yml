@@ -1,6 +1,6 @@
 name: release
 
-# Publishes to PyPI when a version tag is pushed (git tag v1.2.0 && git push origin v1.2.0).
+# Publishes to PyPI when a version tag is pushed (git tag v1.2.1 && git push origin v1.2.1).
 # Uses PyPI trusted publishing: no API token is stored anywhere. It needs a one-time trusted
 # publisher entry for this repository and workflow on pypi.org.
 

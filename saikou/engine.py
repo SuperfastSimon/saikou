@@ -49,7 +49,7 @@ from enum import Enum
 from functools import lru_cache
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 
 def utc_now() -> str:

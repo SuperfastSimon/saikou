@@ -1,6 +1,6 @@
 {
   "name": "saikou-harden",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Harden code against a stated threat model, then mechanically verify the result with the saikou engine before anything is written. Rejects fake fixes: suppression laundering, unwired guards, partial shared-sink fixes, elision, API breaks.",
   "author": { "name": "The Saikou authors" },
   "homepage": "https://saikou.tech",

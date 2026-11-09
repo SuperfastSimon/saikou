@@ -486,6 +486,31 @@ def test_the_hosted_redirect_text_says_nothing_about_a_key(two_servers):
     assert err.value.public == "Provider answered HTTP 302, a redirect, which Saikou does not follow."
 
 
+def test_the_switch_to_json_mode_does_not_use_up_an_attempt(monkeypatch):
+    import io
+    import urllib.error
+
+    seen = []
+
+    def first_400(url, payload, api_key, timeout):
+        seen.append(payload["response_format"]["type"])
+        if len(seen) == 1:
+            raise urllib.error.HTTPError(url, 400, "Bad Request", {}, io.BytesIO(b"{}"))
+        return REPLY
+
+    monkeypatch.setattr(llm, "_post", first_400)
+    config = llm.LLMConfig(api_key="test-key-not-real", structured=True, retries=0)
+    assert llm.call_llm(MESSAGES, HARDEN_SCHEMA, config)["hardened_code"].startswith("import shlex")
+    assert seen == ["json_schema", "json_object"]
+
+
+def test_the_default_endpoint_in_capitals_in_a_dotenv_is_not_refused(tmp_path):
+    f = tmp_path / ".env"
+    f.write_text("LLM_BASE_URL=https://API.OPENAI.COM/v1\n")
+    llm.load_env_file(str(f))
+    assert llm._ENDPOINTS_IN_FILE == {}
+
+
 def test_local_preset_sends_a_repetition_penalty_and_cloud_does_not(monkeypatch):
     seen = _capture(monkeypatch)
     llm.call_llm(MESSAGES, HARDEN_SCHEMA, llm.LLMConfig(base_url="http://localhost:11434/v1",

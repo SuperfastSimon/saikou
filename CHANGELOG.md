@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.2.1 - not released yet
+
+### Security
+- The sink checks follow rewritten forms, not only the literal one. These fake fixes used to come
+  back `ok`: `shell=1`, `shell=bool(1)`, `shell=not False`, a module constant that is `True`,
+  `**{'shell': True}`; `verify=bool(0)`; `s = requests.Session()` then `s.verify = False`;
+  `_e = eval` then `_e(x)`; `cur.execute(sql, ())` with an empty parameter tuple; and
+  `run = cur.execute` then `run(f"...")`. The checks read values the file itself fixes
+  (constants, `not`, `and`/`or`, `bool(...)`, names assigned exactly once). Python only. Old and
+  new engine compared on 18,713 Python files (CPython 3.11 `Lib`, a virtual environment's
+  site-packages, one application): 0 false blocks in change gating with either. A local constant
+  SQL string passed to `execute()` is no longer reported.
+- Change gating reads the language of a script without an extension from its `#!` line (python,
+  node, sh and the like). Such a script used to be skipped unless `--include-unknown` was given,
+  so any change in it passed the gate.
+- Python too deeply nested to parse is a `parse_failure` instead of a crash (`RecursionError`,
+  `MemoryError`): the hosted API answered 500 and the CLI gate stopped with a traceback.
+- The GitHub Action runs the installed engine even when the checked-out repository holds a
+  `saikou/` or `pip/` folder or sets `PYTHONPATH`; a pull request could stand in for the engine.
+- `saikou ui` keeps the session key off the command line: the browser gets a private temporary
+  page that redirects, removed after 60 seconds, at shutdown or at exit.
+- The hosted API's sessions are shared fairly: each token gets an equal share of `MAX_SESSIONS`
+  (at least 1) and replaces only its own oldest intake. One token could push out everyone else's.
+  The per-token rate limit is thread-safe; concurrent requests could pass it together.
+- Every external GitHub Action is pinned to a commit SHA and moved to its current major version.
+
+### Fixed
+- `saikou harden --write` and the local app refuse a file that is not UTF-8. They read such a
+  file with replacement characters and then wrote U+FFFD over the real bytes.
+- Writing a result is atomic (a temporary file in the same folder, then `os.replace`, with the
+  file mode copied), so a full disk cannot leave an empty or half file. Hard links and ACLs are
+  not kept. `--write` also refuses a file that changed while the model was working.
+- In the local app, Harden accepted any `compat` value, and an unknown one silently switched off
+  the `strict_api` gate. `compat`, `dependencies` and `error_policy` now take only the values the
+  CLI and the hosted API take (422 otherwise), checked before the model is called.
+- The hosted API answers every unexpected error in its documented JSON shape, with the traceback
+  only in the server log. A non-ASCII `Authorization` header is a 401 and a non-ASCII token works;
+  a non-string `before` or `after` in `/v1/verify/batch` is a 422. All three were text/plain 500s.
+- `saikou ui --port 80` accepts the `Host` and `Origin` values browsers send for the default port.
+- A provider that refuses structured output no longer costs an attempt, so with `retries=0` the
+  request in plain JSON mode is still sent.
+- A provider's default endpoint written in capitals in `.env` no longer stops the run.
+- The suppression oracle's drift report prints plain version numbers.
+
+### Changed
+- `verify`, `verify_batch` and the local git gate check `format` and every option before any
+  verification or git run.
+- `qa/site` no longer uses Lighthouse CI, which brought all 17 npm audit findings of that folder.
+- `fp_corpus.py` records the engine version, commit, date and Python version in its output, and
+  the files in `docs/measurements/` carry them.
+- SARIF upload: the README and the Action state GitHub's full requirements for a private
+  repository (GitHub Code Security or Advanced Security, and `actions: read`).
+
 ## 1.2.0 - 2026-11-08
 
 ### Added

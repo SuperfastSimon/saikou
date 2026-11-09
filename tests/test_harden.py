@@ -99,3 +99,52 @@ def test_harden_falls_back_to_content_when_extension_is_unknown(tmp_path, monkey
           "--no-analyser", "--format", "json"])
     import json as _json
     assert _json.loads(capsys.readouterr().out)["language"] == "python"
+
+
+# ---- --write: the same guarantees as the local app (review 9 and 16, CLI path) ---------------
+
+def test_a_file_that_is_not_utf8_is_refused_before_the_model_is_asked(target, monkeypatch, capsys):
+    raw = "# café\n".encode("cp1252") + ORIGINAL.encode()
+    target.write_bytes(raw)
+    calls = []
+    monkeypatch.setattr(llm, "_post", lambda *a, **k: calls.append(1) or _reply(REAL))
+    assert _harden(target, "--write") == EXIT_ERROR
+    assert "not UTF-8" in capsys.readouterr().err
+    assert calls == [] and target.read_bytes() == raw
+
+
+def test_a_failed_write_leaves_the_file_as_it_was(target, monkeypatch, capsys):
+    monkeypatch.setattr(llm, "_post", lambda *a, **k: _reply(REAL))
+
+    def full(*_a, **_k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("saikou.service.os.replace", full)
+    assert _harden(target, "--write") == EXIT_ERROR
+    assert "Not written" in capsys.readouterr().err
+    assert target.read_text() == ORIGINAL
+    assert [p.name for p in target.parent.iterdir()] == ["svc.py"]     # no temporary file left
+
+
+def test_a_file_changed_during_the_model_call_is_not_overwritten(target, monkeypatch, capsys):
+    newer = ORIGINAL + "# edited meanwhile\n"
+
+    def edit_then_answer(*_a, **_k):
+        target.write_text(newer)
+        return _reply(REAL)
+
+    monkeypatch.setattr(llm, "_post", edit_then_answer)
+    assert _harden(target, "--write") == EXIT_ERROR
+    assert "changed while" in capsys.readouterr().err
+    assert target.read_text() == newer
+
+
+def test_write_keeps_going_through_a_symlink(target, monkeypatch):
+    link = target.parent / "link.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("this machine cannot create symbolic links")
+    monkeypatch.setattr(llm, "_post", lambda *a, **k: _reply(REAL))
+    assert _harden(link, "--write") == EXIT_OK
+    assert link.is_symlink() and target.read_text() == REAL
