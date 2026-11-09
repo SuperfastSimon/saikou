@@ -214,7 +214,7 @@ def test_the_run_step_gates_with_the_installed_engine(tmp_path):
 
     python = Path(sys.executable).as_posix()
     script = PY.sub(lambda _m: '"$PYTHON_UNDER_TEST"', dict(run_steps())["run"])
-    (tmp_path / "step.sh").write_text(script + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / "step.sh").write_bytes((script + "\n").encode("utf-8"))   # LF, also on Windows
     out, summary = tmp_path / "output.txt", tmp_path / "summary.md"
     env = dict(os.environ, PYTHON_UNDER_TEST=python, PYTHONPATH=repo.as_posix(),
                INPUT_BASE=base, PR_BASE="", PUSH_BEFORE="", CLAIMS="", STRICT_API="false",

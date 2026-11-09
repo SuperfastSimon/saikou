@@ -2764,7 +2764,16 @@ class SessionStore:
         self._ttl, self._max, self._per_owner = ttl_s, max_entries, max_per_owner
         self._data: Dict[str, Session] = {}
         self._owner: Dict[str, str] = {}
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
+        self._lock_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _guard(self) -> asyncio.Lock:
+        # Made here, not in __init__: on Python 3.9 a Lock binds to the event loop that is current
+        # when it is created, and the hosted API creates its store at import, before its loop runs.
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock, self._lock_loop = asyncio.Lock(), loop
+        return self._lock
 
     def _drop(self, key: str) -> Optional[Session]:
         self._owner.pop(key, None)
@@ -2780,7 +2789,7 @@ class SessionStore:
             self._drop(key)
 
     async def put(self, session: Session, owner: str = "") -> str:
-        async with self._lock:
+        async with self._guard():
             self._purge()
             mine = [k for k, o in self._owner.items() if o == owner]
             if self._per_owner is not None and len(mine) >= self._per_owner:
@@ -2795,13 +2804,13 @@ class SessionStore:
             return token
 
     async def get(self, token: str) -> Optional[Session]:
-        async with self._lock:
+        async with self._guard():
             self._purge()
             return self._data.get(token)
 
     async def take(self, token: str) -> Optional[Session]:
         """Single-use retrieval: each paid model call needs a fresh intake."""
-        async with self._lock:
+        async with self._guard():
             self._purge()
             return self._drop(token)
 

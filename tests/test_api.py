@@ -346,6 +346,24 @@ def test_a_full_store_takes_from_the_largest_holder():
     assert small in store._data and big[-1] in store._data and big[0] not in store._data
 
 
+def test_the_session_store_needs_no_event_loop_until_it_is_used():
+    """Python 3.9 binds an asyncio.Lock to the current loop when it is created. The hosted API
+    creates its store at import, so importing failed without a current loop."""
+    from saikou.engine import Session, SessionStore, detect_language
+
+    asyncio.set_event_loop(None)
+    store = SessionStore(1800, max_entries=4)
+    det = detect_language("x = 1\n", "python")
+
+    async def put():
+        return await store.put(Session("a", det, time.time()), owner="a")
+
+    async def take(token):
+        return await store.take(token)
+
+    assert asyncio.run(take(asyncio.run(put()))) is not None   # two runs, so two different loops
+
+
 def test_rate_limit_holds_under_concurrent_requests(monkeypatch):
     """Review finding 15: two threads could both pass the check before either appended."""
     api = _load(monkeypatch, API_TOKENS=TOKEN, RATE_LIMIT_PER_MINUTE="1")

@@ -27,6 +27,9 @@
 - Every external GitHub Action is pinned to a commit SHA and moved to its current major version.
 
 ### Fixed
+- The hosted API works on Python 3.9. Its session store made an `asyncio.Lock` at import, which on
+  3.9 binds to the event loop current at that moment: importing could fail, and the lock belonged
+  to the wrong loop once the server ran. The lock is now made when the store is first used.
 - `saikou harden --write` and the local app refuse a file that is not UTF-8. They read such a
   file with replacement characters and then wrote U+FFFD over the real bytes.
 - Writing a result is atomic (a temporary file in the same folder, then `os.replace`, with the
