@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.1 - not released yet
+## 1.2.1 - 2026-11-10
 
 ### Security
 - The sink checks follow rewritten forms, not only the literal one. These fake fixes used to come
