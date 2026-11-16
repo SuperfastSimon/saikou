@@ -378,9 +378,8 @@ def call_llm(messages: List[dict], schema: dict, config: LLMConfig) -> Dict[str,
         payload["response_format"] = {"type": "json_object"}
 
     body: Optional[dict] = None
-    # One pass more than the retries, for the switch to JSON mode below, which is not a retry.
-    # Only that switch can reach the extra pass: every other way out of the last attempt raises.
-    for attempt in range(config.retries + 2):
+    tries = 0       # retries used; the switch to JSON mode below is not one
+    while True:
         try:
             body = _post(url, payload, config.api_key, config.timeout_s)
             break
@@ -397,16 +396,18 @@ def call_llm(messages: List[dict], schema: dict, config: LLMConfig) -> Dict[str,
                 payload["response_format"] = {"type": "json_object"}
                 payload["messages"] = messages + [schema_note]
                 continue
-            if exc.code in (429, 500, 502, 503, 504) and attempt < config.retries:
-                time.sleep(2 ** attempt)
+            if exc.code in (429, 500, 502, 503, 504) and tries < config.retries:
+                time.sleep(2 ** tries)
+                tries += 1
                 continue
             raise LLMError(f"Provider returned HTTP {exc.code}"
                            + _provider_reason(exc, secret),
                            public=f"Provider returned HTTP {exc.code}.") from None
         except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
             # A malformed status line or header: the type only, its text may hold anything.
-            if attempt < config.retries:
-                time.sleep(2 ** attempt)
+            if tries < config.retries:
+                time.sleep(2 ** tries)
+                tries += 1
                 continue
             raise LLMError(f"Provider transport error: {type(exc).__name__}") from None
         except (ValueError, RecursionError):

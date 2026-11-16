@@ -3531,10 +3531,14 @@ class SessionStore:
             self._purge()
             return self._data.get(token)
 
-    async def take(self, token: str) -> Optional[Session]:
-        """Single-use retrieval: each paid model call needs a fresh intake."""
+    async def take(self, token: str, owner: Optional[str] = None) -> Optional[Session]:
+        """Single-use retrieval: each paid model call needs a fresh intake. With `owner`,
+        only the caller that created the session can take it; for anyone else it does not
+        exist (and stays)."""
         async with self._guard():
             self._purge()
+            if owner is not None and self._owner.get(token) != owner:
+                return None
             return self._drop(token)
 
 

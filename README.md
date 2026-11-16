@@ -263,9 +263,8 @@ Limits, as environment variables with their defaults (see `.env.example`):
 `SESSION_TTL_S` (default `1800`) and `MAX_SESSIONS` (default `500`) bound the single-use
 sessions between `/harden/intake` and `/harden/apply`. Each token gets an equal share
 (`MAX_SESSIONS` divided by the number of tokens, at least 1): a token that fills its share
-replaces its own oldest session, not another token's. Only with more tokens than
-`MAX_SESSIONS` can a full store drop another token's session (the oldest of a token that
-holds the most).
+replaces its own oldest session, not another token's. With more tokens than `MAX_SESSIONS`
+the store holds one session per token. Only the token that created a session can use it.
 
 **Docker**
 

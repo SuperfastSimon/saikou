@@ -36,7 +36,7 @@ from typing import Any, Deque, Dict, List, Optional
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from starlette.exceptions import HTTPException
 
 from . import service, webassets
@@ -84,7 +84,8 @@ _TOKENS = tuple((b, hashlib.sha256(b).hexdigest()[:16]) for b in
 
 # Every token gets an equal share of the session store, so one caller filling its share
 # replaces only its own oldest intake, never another caller's.
-_sessions = SessionStore(_int_env("SESSION_TTL_S", 1800), MAX_SESSIONS,
+# Room for at least one session per token, also with more tokens than MAX_SESSIONS.
+_sessions = SessionStore(_int_env("SESSION_TTL_S", 1800), max(MAX_SESSIONS, len(API_TOKENS)),
                          max_per_owner=max(1, MAX_SESSIONS // max(1, len(API_TOKENS))))
 _hits: Dict[str, Deque[float]] = defaultdict(deque)
 # rate_limit is a sync dependency, so FastAPI runs it on a thread pool: one lock keeps the
@@ -141,7 +142,7 @@ def require_auth(authorization: str = Header(default="")) -> str:
         sent = authorization.encode("latin-1")   # ASGI hands header bytes over as latin-1
     except UnicodeEncodeError:
         sent = b""
-    token = sent[7:] if sent.startswith(b"Bearer ") else b""
+    token = sent[7:] if sent[:7].lower() == b"bearer " else b""   # the scheme ignores case
     for expected, caller in _TOKENS:
         if secrets.compare_digest(token, expected):
             return caller
@@ -207,8 +208,20 @@ async def _json(request: Request) -> Any:
     raw = await request.body()
     try:
         return json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):      # also JSON nested too deep
         raise ServiceError(400, "bad_json", "Request body is not valid UTF-8 JSON.") from None
+
+
+def _model(model: Any, data: Any) -> Any:
+    """`data` as `model`, with the same 422 a declared body parameter gives. Read by hand so
+    that authentication and the rate limit run before the body is looked at."""
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        first = (exc.errors() or [{}])[0]
+        where = ".".join(str(p) for p in first.get("loc", ()))
+        message = first.get("msg", "Invalid request.")
+        raise ServiceError(422, "bad_request", f"{where}: {message}" if where else message) from None
 
 
 # ---------------------------------------------------------------------------------------
@@ -299,7 +312,8 @@ async def verify_batch(request: Request, caller: str = Depends(rate_limit)) -> d
 
 
 @app.post("/harden/intake")
-async def intake(body: IntakeBody, caller: str = Depends(rate_limit)) -> dict:
+async def intake(request: Request, caller: str = Depends(rate_limit)) -> dict:
+    body = _model(IntakeBody, await _json(request))
     detection = detect_language(body.code, body.language)
     surface = python_surface(body.code) if detection.language == "python" else None
     session_id = await _sessions.put(Session(body.code, detection, time.time()), owner=caller)
@@ -318,7 +332,14 @@ async def intake(body: IntakeBody, caller: str = Depends(rate_limit)) -> dict:
 
 
 @app.post("/harden/apply")
-async def apply(body: ApplyBody, caller: str = Depends(rate_limit)) -> dict:
+async def apply(request: Request, caller: str = Depends(rate_limit)) -> dict:
+    body = _model(ApplyBody, await _json(request))
+    declared = body.contract.language
+    if declared and normalise_language(declared) == "unknown" \
+            and declared.strip().lower() != "unknown":
+        # Before the session is spent: an unknown language would drop the checks to the
+        # "asserted" tier and a no-op fix would come back verified.
+        raise ServiceError(422, "bad_field", f"Unknown language {declared!r}.")
     try:
         config = LLMConfig.from_env()
     except LLMError:
@@ -329,7 +350,7 @@ async def apply(body: ApplyBody, caller: str = Depends(rate_limit)) -> dict:
         # Checked before the session is consumed, so the caller can retry later.
         raise ServiceError(503, "model_not_configured", f"{config.key_hint} is not set on this "
                            "server, so hardening is unavailable here.")
-    session = await _sessions.take(body.session_id)
+    session = await _sessions.take(body.session_id, owner=caller)
     if session is None:
         raise ServiceError(404, "session_not_found", "Unknown, expired or already-used "
                            "session. Start at /harden/intake.")
