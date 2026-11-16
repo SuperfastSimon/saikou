@@ -327,6 +327,20 @@ def test_diff_checks_a_script_without_an_extension(repo, capsys, shebang, body, 
 
 
 @needs_git
+@pytest.mark.parametrize("name, shebang", [
+    ("deploy.sh", "#!/usr/bin/env python3"),              # the extension used to win
+    ("deploy", "#!/usr/bin/env -Spython3 -u"),
+    ("deploy", "#!/usr/bin/env uv run --script"),
+])
+def test_diff_checks_python_behind_a_misleading_name_or_launcher(repo, capsys, name, shebang):
+    (repo / name).write_text(f"{shebang}\n{PY_EVASION}")
+    _git(repo, "add", name)
+    assert main(["diff", "--base", "HEAD"]) == EXIT_BLOCKED
+    (report,) = _diff_json(capsys)["files"]
+    assert report["language"] == "python"
+
+
+@needs_git
 def test_diff_checks_a_modified_script_and_one_that_lost_its_shebang(repo, capsys):
     (repo / "deploy").write_text("#!/usr/bin/env python3\nimport subprocess\n")
     _git(repo, "add", "deploy")

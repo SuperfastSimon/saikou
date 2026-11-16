@@ -813,7 +813,7 @@ def test_where_a_bare_flake8_marker_hides_a_report_is_still_the_literal_form():
     ("#!/usr/bin/env", "unknown"),
     ("#!", "unknown"),
     ("# not a shebang", "unknown"),
-    ("\ufeff#!/usr/bin/env python", "unknown"),   # the kernel needs #! as the first bytes
+    (engine.BOM + "#!/usr/bin/env python", "python"),   # the kernel skips it; `python f` runs it
     (" #!/usr/bin/env python", "unknown"),
 ])
 def test_language_from_shebang(first_line, language):
@@ -821,9 +821,42 @@ def test_language_from_shebang(first_line, language):
     assert engine.language_from_shebang((first_line + "\r\nrest\n").encode()) == language
 
 
-def test_language_for_file_prefers_the_extension_then_the_new_shebang():
+@pytest.mark.parametrize("first_line", [
+    "#!/usr/bin/env -Spython3 -u",
+    "#!/usr/bin/env --split-string=python3 -u",
+    "#!/usr/bin/env -P /opt/bin python3",
+    "#!/usr/bin/env uv run --script",
+    "#!/usr/bin/env pipx run",
+    "#!/usr/bin/python3.13t",
+    "#!/usr/bin/python3-dbg",
+    "#!/usr/bin/env pythonw",
+    "#!/usr/bin/nice -n 10 python3",
+    "#!/usr/bin/sudo -u deploy python3",
+    "#!/usr/bin/timeout 10s python3",
+])
+def test_common_python_lines_found_in_the_attack_round(first_line):
+    # Each of these used to be "unknown", so saikou diff skipped the script.
+    assert engine.language_from_shebang(first_line + "\nrest\n") == "python"
+
+
+POLYGLOT = ("#!/bin/sh\n"
+            "''''exec python3 \"$0\" \"$@\" # '''\n"
+            "import subprocess\n"
+            "subprocess.run(c, shell=True)\n")
+
+
+def test_language_for_file_checks_with_the_more_thorough_of_extension_and_shebang():
     py, sh = "#!/usr/bin/env python3\n", "#!/bin/sh\n"
-    assert engine.language_for_file("tool.sh", py) == "shell"
+    # A Python script named .sh used to be checked as shell: an added shell=True passed.
+    assert engine.language_for_file("tool.sh", py) == "python"
+    assert engine.language_for_file("tool.ts", "#!/usr/bin/env node\n") == "typescript"
+    assert engine.language_for_file("tool.sh", POLYGLOT) == "python"
+    assert engine.language_for_file("bin/run", "#!/opt/bin/launcher\nimport os\nx = 1\n") == "python"
+    assert engine.language_for_file("tool.sh", "#!/bin/sh\necho hi\ncd /tmp\n") == "shell"
+
+
+def test_language_for_file_prefers_the_new_shebang():
+    py, sh = "#!/usr/bin/env python3\n", "#!/bin/sh\n"
     assert engine.language_for_file("bin/deploy", py, sh) == "python"
     assert engine.language_for_file("bin/deploy", "x\n", sh) == "shell"
     assert engine.language_for_file("bin/deploy", "x\n", "") == "unknown"

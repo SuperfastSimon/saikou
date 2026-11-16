@@ -291,52 +291,124 @@ _SHEBANG_INTERPRETERS = {
     "mksh": "shell", "ash": "shell",
     "ruby": "ruby", "php": "php", "swift": "swift",
 }
-_ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir"}
+# Programs that start the program named later on the line (`env`, `nice -n 10`, `sudo -u x`,
+# `npx tsx`): their options and numbers are skipped. Programs that run a Python script
+# themselves (`uv run --script`, `pipx run`) mean Python.
+_LAUNCHERS = {"env", "nice", "nohup", "sudo", "doas", "time", "exec", "command", "chrt",
+              "ionice", "taskset", "stdbuf", "timeout", "npx", "pnpx", "bunx", "busybox"}
+_PYTHON_RUNNERS = {"uv", "uvx", "pipx", "poetry", "pdm", "hatch", "rye", "pixi", "conda",
+                   "micromamba", "coverage"}
+_ENV_OPTIONS_WITH_VALUE = {"-u", "--unset", "-C", "--chdir", "-P", "-a", "--argv0", "-n",
+                           "-c", "-g", "-k", "-p", "-s", "-o", "-e", "-i"}
+_DURATION = re.compile(r"\d+(?:\.\d+)?[smhd]?")
+_VERSION_SUFFIX = re.compile(r"[\d.]*(?:-?[a-z]+)?")
+_TIER_RANK = {Tier.AST_VERIFIED: 0, Tier.STRUCTURAL: 1, Tier.ASSERTED: 2}
+
+
+def _interpreter(word: str) -> str:
+    """Language of an interpreter named on a `#!` line, with a version or build suffix
+    (python3.13t, python3-dbg, pythonw, php8.2, node.exe); "unknown" otherwise."""
+    program = re.split(r"[\\/]", word)[-1].lower()
+    if program.endswith(".exe"):
+        program = program[:-4]
+    if program in _SHEBANG_INTERPRETERS:
+        return _SHEBANG_INTERPRETERS[program]
+    for name in sorted(_SHEBANG_INTERPRETERS, key=len, reverse=True):
+        if program.startswith(name) and _VERSION_SUFFIX.fullmatch(program[len(name):]):
+            return _SHEBANG_INTERPRETERS[name]
+    return "unknown"
+
+
+def _first_line(content: Any) -> Optional[str]:
+    if isinstance(content, bytes):
+        return content[:512].split(b"\n", 1)[0].decode("utf-8", "replace")
+    if isinstance(content, str):
+        return content[:512].split("\n", 1)[0]
+    return None
 
 
 def language_from_shebang(content: Any) -> str:
     """Language key from the `#!` line that opens `content` (text or bytes); "unknown" when
     there is none or it names an interpreter Saikou does not check. Only the first line
     counts, and only when `#!` are its first two characters, as for the kernel, which also
-    ends a word at a NUL byte (`#!/usr/bin/env node` + NUL still runs node)."""
-    if isinstance(content, bytes):
-        first = content[:512].split(b"\n", 1)[0].decode("utf-8", "replace")
-    elif isinstance(content, str):
-        first = content[:512].split("\n", 1)[0]
-    else:
+    ends a word at a NUL byte (`#!/usr/bin/env node` + NUL still runs node). A program that
+    starts another one (env, also `env -S` and `--split-string=`, nice, sudo, npx, ...) is
+    looked through; `uv run`, `pipx run` and the like mean Python."""
+    first = _first_line(content)
+    if first is None:
         return "unknown"
+    first = first.lstrip(BOM)
     if not first.startswith("#!"):
         return "unknown"
     words = first[2:].replace("\x00", " ").split()
-    if not words:
-        return "unknown"
-    program = re.split(r"[\\/]", words[0])[-1].lower()
-    if program in ("env", "env.exe"):
-        rest = iter(words[1:])
-        program = ""
-        for word in rest:
-            if word in _ENV_OPTIONS_WITH_VALUE:
-                next(rest, None)
-            elif not word.startswith("-") and "=" not in word:
-                program = re.split(r"[\\/]", word)[-1].lower()
+    i = 0
+    while i < len(words):
+        program = re.split(r"[\\/]", words[i])[-1].lower()
+        if program.endswith(".exe"):
+            program = program[:-4]
+        if program in _PYTHON_RUNNERS:
+            return "python"
+        if program not in _LAUNCHERS:
+            return _interpreter(words[i])
+        i += 1
+        while i < len(words):
+            word = words[i]
+            if word.startswith("-S") and len(word) > 2:              # env -Spython3 -u
+                words[i:i + 1] = word[2:].split()
                 break
-    if program.endswith(".exe"):
-        program = program[:-4]
-    return _SHEBANG_INTERPRETERS.get(re.sub(r"[\d.]+$", "", program), "unknown")
+            if word.startswith("--split-string="):
+                words[i:i + 1] = word.split("=", 1)[1].split()
+                break
+            if word in _ENV_OPTIONS_WITH_VALUE:
+                i += 2
+            elif word.startswith("-") or "=" in word or _DURATION.fullmatch(word):
+                i += 1
+            else:
+                break
+    return "unknown"
+
+
+def _parses_as_python(content: Any) -> bool:
+    """True when `content` is Python with at least two statements: an executable file whose
+    `#!` names a program Saikou does not know, or a shell/Python polyglot."""
+    text = content.decode("utf-8", "replace") if isinstance(content, bytes) else content
+    if not isinstance(text, str):
+        return False
+    try:
+        return len(ast.parse(_without_bom(text)).body) >= 2
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return False
 
 
 def language_for_file(path: str, *contents: Any) -> str:
-    """Language key from the extension or, when that is not recognised, from the `#!` line
-    of the first of `contents` (new version first, then old) that has a recognised one.
-    An executable script without an extension used to be "unknown" and skipped."""
-    language = language_for_path(path)
-    if language != "unknown":
-        return language
+    """Language key for a file, from its extension and the `#!` line of the first of
+    `contents` (new version first, then old) that has a recognised one.
+
+    The `#!` line decides what runs, the extension what a reader expects; when they name
+    different languages Saikou checks with the more thorough of the two (Python before the
+    structural ones), so a Python script named deploy.sh is checked as Python. A file with no
+    recognised extension whose `#!` names an unknown program, or a shell script, is read as
+    Python when it parses as Python (an sh/Python polyglot). An executable script without an
+    extension used to be "unknown" and skipped."""
+    by_extension = language_for_path(path)
+    by_line = "unknown"
     for content in contents:
-        language = language_from_shebang(content)
-        if language != "unknown":
-            return language
-    return "unknown"
+        by_line = language_from_shebang(content)
+        if by_line != "unknown":
+            break
+    if by_extension == "unknown" or by_line == "unknown" or by_line == by_extension:
+        language = by_line if by_extension == "unknown" else by_extension
+    elif _TIER_RANK[LANGUAGES[by_line][1]] < _TIER_RANK[LANGUAGES[by_extension][1]]:
+        language = by_line
+    else:
+        language = by_extension
+    if language in ("unknown", "shell"):
+        for content in contents:
+            first = _first_line(content)
+            if (first is not None and first.lstrip(BOM).startswith("#!")
+                    and _parses_as_python(content)):
+                return "python"
+    return language
 
 
 # ===========================================================================
