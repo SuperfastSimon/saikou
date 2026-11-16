@@ -28,6 +28,11 @@ comment-only edits, API breaks). No score, ever: every finding carries a provena
 | `saikou/web/` | The web app: vanilla JS + CSS, no build, no third-party requests. `sample.json` is the "Load an example" fake fix |
 | `saikou/sarif.py` | SARIF 2.1.0 output |
 | `site/` | saikou.tech source (English + Dutch), no third-party requests |
+| `site/index.html`, `site/nl/index.html` | Home pages (en / nl) |
+| `site/services.html`, `site/nl/nis2.html` | Services and NIS2 page (en / nl) |
+| `site/tools/checker.html`, `site/nl/werkbank.html` | In-browser checker (en / nl) |
+| `site/legal.html` | Legal and privacy, both languages on one page |
+| `site/interim.html` | Holding page ("being rebuilt") |
 | `site/sitemap.xml`, `site/robots.txt` | Search metadata; `scripts/check_site.py` checks them against the pages |
 | `site/assets/og-*.png`, `site/404.html` | Social preview images (rendered by `qa/site/og-image.js`, never drawn by hand); bilingual not-found page (root-relative links, noindex) |
 | `docs/brand.md` | Brand brief: positioning, voice, proof, visual rules, open decisions. Read before any site, logo or launch copy work |
@@ -110,6 +115,32 @@ All tests and the self-test must pass before any commit.
   any kind (no Google Fonts, CDN, analytics). Before saying site work is done: stage both builds,
   run `qa/site` on them, and look at the screenshots.
 - **Commits:** never change git config.
+
+## Live site (where saikou.tech is served from)
+
+- **Source** is `site/` in this repo. **Hosting** is a separate repo: `MrtnHt/Saikou.tech-landing`
+  (GitHub Pages from `main`, `CNAME` saikou.tech; DNS `www.saikou.tech` -> `mrtnht.github.io`).
+- Publishing = stage with `scripts/stage_site.py --mode full`, then copy the staged output into that
+  repo and push. That push is an outward action: explicit yes in chat each time.
+- The landing repo holds only the staged site plus a short `README.md`; it is not a fork or a second
+  source. Never edit pages there, never delete or rename it (the site goes offline).
+
+## Open site work (review 2026-11-14, owner decides)
+
+Nothing here is decided. Build none of it without a yes in chat.
+
+- **No signup path:** Pro and Team show prices ("not on sale yet") and the only capture is a
+  `mailto:` waitlist link. Options: a waitlist form with no third-party request, or no prices
+  until there is something to sell.
+- **Home page density:** the report-reading guide, verification tiers and the 38-check table all
+  sit on the home page. Proposal: keep hero, demo, one proof number and install; move the rest to docs.
+- **Monetisation:** about 19/49 EUR per org is small next to the NIS2 angle (evidence that fixes were
+  verified, sold as a report or service). Positioning choice; see `docs/brand.md` and `site/services.html`.
+- **Contact:** `ceo@saikou.tech` and a personal GitHub owner read as a one-person project; consider
+  a `hello@` address and an organisation account.
+- **`site/interim.html`** ("being rebuilt") is indexable; noindex or remove it if it is no longer used.
+- Checked and fine: in-page anchors (`#pricing`, `#limits`) exist, and `check_site.py` already fails
+  on missing anchors.
 
 ## Windows pitfalls (learned the hard way)
 
