@@ -36,6 +36,7 @@ from .engine import (
     language_for_file,
     normalise_language,
     normalise_threats,
+    trusted_executable,
 )
 from .sarif import to_sarif
 from .verify import (
@@ -208,7 +209,7 @@ def _format(body: dict) -> str:
 
 
 def _analyser_ok() -> bool:
-    return shutil.which("bandit") is not None
+    return trusted_executable("bandit") is not None
 
 
 # ---------------------------------------------------------------------------------------

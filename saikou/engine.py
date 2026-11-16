@@ -2643,8 +2643,40 @@ class AnalyserResult:
     error: Optional[str] = None
 
 
+def trusted_executable(name: str, *untrusted: str) -> Optional[str]:
+    """Absolute path of program `name`, or None when it is not installed.
+
+    Searched in the folder of the running Python first (a virtual environment's own tools),
+    then in the absolute PATH entries. Never in the current folder or in any of `untrusted`
+    (the repository under check) or below them: Windows runs a bare program name from the
+    current folder before PATH, and so does shutil.which before Python 3.12, so a pull request
+    that adds git.exe or bandit.exe to the repository root used to replace the real tool and
+    report no changed files.
+    """
+    def inside(folder: str, roots: Sequence[str]) -> bool:
+        real = os.path.normcase(os.path.realpath(folder))
+        return any(real == r or real.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+    roots = [os.path.normcase(os.path.realpath(p)) for p in (os.getcwd(), *untrusted) if p]
+    exts = [""]
+    if os.name == "nt":
+        exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
+    folders = [os.path.dirname(os.path.abspath(sys.executable))]
+    folders += [p for p in os.environ.get("PATH", "").split(os.pathsep)
+                if p and os.path.isabs(p) and not inside(p, roots)]
+    for folder in folders:
+        for ext in exts:
+            candidate = os.path.join(folder, name + ext)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+    return None
+
+
 def _run_bandit(code: str, ignore_nosec: bool, timeout: float) -> Tuple[bool, List[str], Optional[str]]:
-    argv = ["bandit", "-f", "json", "-q"]
+    bandit = trusted_executable("bandit")
+    if bandit is None:
+        return False, [], "bandit is not installed"
+    argv = [bandit, "-f", "json", "-q"]
     if ignore_nosec:
         argv.append("--ignore-nosec")
     argv.append("-")

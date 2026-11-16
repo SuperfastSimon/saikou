@@ -24,6 +24,7 @@ from .engine import (
     normalise_threats,
     run_analyser,
     scan_transformation,
+    trusted_executable,
 )
 
 # How each check is established. Mirrors the ledger's provenance vocabulary so
@@ -318,8 +319,11 @@ MAX_FILE_BYTES = 1_000_000
 
 
 def _git(args: Sequence[str], cwd: Optional[str] = None) -> bytes:
+    git = trusted_executable("git", *([cwd] if cwd else []))
+    if git is None:
+        raise GitError("git is not installed or not on PATH")
     try:
-        proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=120)
+        proc = subprocess.run([git, *args], cwd=cwd, capture_output=True, timeout=120)
     except FileNotFoundError:
         raise GitError("git is not installed or not on PATH") from None
     except subprocess.TimeoutExpired:
