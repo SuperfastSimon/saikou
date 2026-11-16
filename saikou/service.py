@@ -30,6 +30,8 @@ from .engine import (
     THREAT_CHOICES,
     Contract,
     __version__,
+    BOM,
+    _without_bom,
     detect_language,
     language_for_file,
     normalise_language,
@@ -477,10 +479,26 @@ def _unchanged_text(path: str, code: str) -> str:
         raise ServiceError(422, "bad_field", "'path' must be an existing file to write to.")
     with open(path, "rb") as fh:
         current = _utf8(fh.read())
-    # Compare content, not line-ending style: browsers and text-mode reads turn CRLF into LF.
-    if current.replace("\r\n", "\n") != code.replace("\r\n", "\n"):
+    # Compare content, not line-ending style or a byte-order mark: browsers and text-mode
+    # reads turn CRLF (and a lone CR) into LF.
+    if _plain_text(current) != _plain_text(code):
         raise ServiceError(409, "file_changed", "The file changed since it was loaded; reload it before writing.")
     return current
+
+
+def _plain_text(text: str) -> str:
+    return _without_bom(text).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def text_in_file_style(current: str, proposed: str) -> str:
+    """`proposed` with the line endings (CRLF, a lone CR or LF) and the byte-order mark of
+    the file's current text, so that writing a result changes only what the result changes."""
+    body = _plain_text(proposed)
+    if "\r\n" in current:
+        body = body.replace("\n", "\r\n")
+    elif "\r" in current:
+        body = body.replace("\n", "\r")
+    return (BOM + body) if current.startswith(BOM) else body
 
 
 def _replace_file(target: str, data: bytes) -> None:
@@ -514,11 +532,8 @@ def _write_verified(path: str, code: str, proposed: str) -> None:
     # itself would turn it into a plain file.
     target = os.path.realpath(path) if path else path
     current = _unchanged_text(target, code)
-    proposed = proposed.replace("\r\n", "\n")
-    if "\r\n" in current:                       # keep the file's own line-ending style
-        proposed = proposed.replace("\n", "\r\n")
     try:
-        data = proposed.encode("utf-8")         # before the file is touched
+        data = text_in_file_style(current, proposed).encode("utf-8")   # before the file is touched
     except UnicodeEncodeError:
         raise ServiceError(422, "not_encodable", "The result holds characters that cannot be "
                            "written as UTF-8; the file was not changed.") from None

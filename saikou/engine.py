@@ -60,6 +60,16 @@ def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+BOM = chr(0xFEFF)    # U+FEFF, the byte-order mark as text
+
+
+def _without_bom(code: str) -> str:
+    """`code` without one leading byte-order mark. CPython runs a file that starts with a
+    UTF-8 BOM, but `ast.parse` on the decoded text refuses U+FEFF, so with the mark left in
+    every parser check read the file as "does not parse" and quietly switched off."""
+    return code[1:] if code.startswith(BOM) else code
+
+
 # ===========================================================================
 # 1. Provenance - the spine
 # ===========================================================================
@@ -496,7 +506,7 @@ def _tokens_trustworthy(code: str) -> bool:
     if re.search(r"\r(?!\n)", code):
         return False
     try:
-        ast.parse(code)
+        ast.parse(_without_bom(code))
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return False
     return True
@@ -750,7 +760,7 @@ def _parsed(code: str) -> Optional[ast.AST]:
     # as "does not parse" here, they emptied _security_lines, so a bare flake8 marker on
     # a security statement quietly stopped blocking.
     try:
-        return ast.parse(code)
+        return ast.parse(_without_bom(code))
     except (SyntaxError, ValueError):
         return None
 
@@ -1185,7 +1195,7 @@ def _bodies(code: str) -> Dict[str, int]:
     """Map each def/class qualified name to the count of real statements in its
     body (a bare `...`, `pass`, or lone docstring counts as zero)."""
     try:
-        tree = ast.parse(code)
+        tree = ast.parse(_without_bom(code))
     except (SyntaxError, ValueError):
         return {}
     out: Dict[str, int] = {}
@@ -1283,7 +1293,7 @@ def _norm_ast(code: str) -> Optional[str]:
     """AST dump with positions stripped. Comments and docstrings do not appear in
     an AST, so a comment-only edit produces an identical dump."""
     try:
-        return ast.dump(ast.parse(code), annotate_fields=True, include_attributes=False)
+        return ast.dump(ast.parse(_without_bom(code)), annotate_fields=True, include_attributes=False)
     except (SyntaxError, ValueError):
         return None
 
@@ -1691,7 +1701,7 @@ def danger_sinks(code: str) -> List[Finding]:
     analyser verdict. This is the 'positive proof' half of the ledger rule:
     these sinks must be absent in the AFTER, full stop."""
     try:
-        tree = ast.parse(code)
+        tree = ast.parse(_without_bom(code))
     except (SyntaxError, ValueError):
         return []
     out: List[Finding] = []
@@ -1821,7 +1831,7 @@ def unwired_guards(code: str) -> List[Finding]:
     sink (`safePath` validated, `filePath` used).
     """
     try:
-        tree = ast.parse(code)
+        tree = ast.parse(_without_bom(code))
     except (SyntaxError, ValueError):
         return []
     out: List[Finding] = []
@@ -1930,7 +1940,7 @@ def shared_sink_paths(code: str) -> List[Finding]:
     check cannot express.
     """
     try:
-        tree = ast.parse(code)
+        tree = ast.parse(_without_bom(code))
     except (SyntaxError, ValueError):
         return []
     wrappers = _forwarding_wrappers(tree)
@@ -2380,7 +2390,7 @@ def python_surface(code: str) -> Optional[Dict[str, Symbol]]:
 
 def _surface(code: str) -> Optional[Dict[str, Symbol]]:
     try:
-        tree = ast.parse(code)
+        tree = ast.parse(_without_bom(code))
     except (SyntaxError, ValueError):
         return None
     out: Dict[str, Symbol] = {}
@@ -2516,7 +2526,7 @@ def _preexisting_aware(before_findings: Sequence[Finding], after_findings: Seque
 
 def _parses(code: str) -> bool:
     try:
-        ast.parse(code)
+        ast.parse(_without_bom(code))
         return True
     except (SyntaxError, ValueError):
         return False

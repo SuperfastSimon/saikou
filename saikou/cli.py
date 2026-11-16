@@ -204,8 +204,10 @@ def cmd_harden(args: argparse.Namespace) -> int:
         with open(args.file, "rb") as fh:
             original = fh.read()
         # Strict, unlike _read: this file may be rewritten, and a byte replaced here would be
-        # lost for good. Newlines as text mode reads them.
-        code = original.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        # lost for good. Newlines as text mode reads them, without a byte-order mark; both go
+        # back on write.
+        current_text = original.decode("utf-8")
+        code = current_text[current_text.startswith(chr(0xFEFF)):].replace("\r\n", "\n").replace("\r", "\n")
     except UnicodeDecodeError:
         return _usage_error(f"{args.file} is not UTF-8. saikou harden rewrites only UTF-8 files, "
                             f"so that no character is lost; convert it first.")
@@ -272,7 +274,7 @@ def cmd_harden(args: argparse.Namespace) -> int:
               "rejected attempt, shown so you can decide.", file=sys.stderr)
         return EXIT_BLOCKED
     if args.write:
-        from .service import _replace_file
+        from .service import _replace_file, text_in_file_style
 
         target = os.path.realpath(args.file)     # through a symlink, as an in-place write would
         try:
@@ -282,7 +284,7 @@ def cmd_harden(args: argparse.Namespace) -> int:
                 print(f"Not written: {args.file} changed while the model was working. Run "
                       f"saikou harden again on the new version.", file=sys.stderr)
                 return EXIT_ERROR
-            _replace_file(target, result.proposed.encode("utf-8"))
+            _replace_file(target, text_in_file_style(current_text, result.proposed).encode("utf-8"))
         except (OSError, UnicodeEncodeError) as exc:
             print(f"Not written: {type(exc).__name__}: {exc}. The file is as it was.",
                   file=sys.stderr)
