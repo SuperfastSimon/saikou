@@ -211,20 +211,30 @@ _c("parse_skipped", "parser", "warn", "python", "both",
       "zijn overgeslagen; alleen tekstchecks draaiden."))
 
 # ---- dangerous sinks --------------------------------------------------------------------
-_SINK = _t("Values count as the file itself fixes them: a constant, not, and/or, bool(...), or a "
-           "name assigned exactly once in the file with name = value (also a function called "
-           "through such a name, as in _e = eval). A parameter, a call result or a name "
-           "assigned more than once is unknown and never counts; a list, dict or set counts "
-           "through its name only when the name is used nowhere but as **name. "
+_SINK = _t("Values count as the file itself fixes them: constants and what is computed from "
+           "them (not, and/or, comparisons, arithmetic, x if c else y, bool(), int(), len(), "
+           "indexing), and names bound only by plain assignment, in every binding to the same "
+           "truth (also a = b = v and a, b = v, w, a class constant, and a function called "
+           "through such a name or getattr, as in _e = eval). A value Saikou cannot establish "
+           "(a parameter without a default, an attribute, a call result, a name bound by a "
+           "loop, or a **mapping that may set the keyword) fails closed: when a fix for that "
+           "threat class is claimed it blocks, because the fix cannot be verified; otherwise "
+           "it is a warning when it is new. from m import *, globals() and locals() make every "
+           "name unknown. "
            "A sink that is new in the output always blocks. One that was already there blocks "
            "only when a fix for that threat class was claimed; otherwise it is a warning "
            "naming what was left alone.",
-           "Waarden tellen zoals het bestand ze zelf vastlegt: een constante, not, and/or, "
-           "bool(...), of een naam die precies één keer in het bestand wordt toegekend met "
-           "naam = waarde (ook een functie die via zo'n naam wordt aangeroepen, zoals "
-           "_e = eval). Een parameter, de uitkomst van een aanroep of een naam die vaker wordt "
-           "toegekend is onbekend en telt nooit; een list, dict of set telt via zijn naam alleen "
-           "als die naam nergens anders dan als **naam wordt gebruikt. "
+           "Waarden tellen zoals het bestand ze zelf vastlegt: constanten en wat daaruit wordt "
+           "berekend (not, and/or, vergelijkingen, rekenen, x if c else y, bool(), int(), len(), "
+           "indexeren), en namen die alleen met een gewone toekenning worden gebonden, bij elke "
+           "binding met dezelfde waarheidswaarde (ook a = b = v en a, b = v, w, een "
+           "klasseconstante, en een functie die via zo'n naam of getattr wordt aangeroepen, zoals "
+           "_e = eval). Een waarde die Saikou niet kan vaststellen (een parameter zonder "
+           "standaardwaarde, een attribuut, de uitkomst van een aanroep, een naam uit een lus, "
+           "of een **mapping die het keyword kan zetten) faalt dicht: als een fix voor die "
+           "dreigingsklasse wordt beweerd, blokkeert hij, omdat de fix niet te verifiëren is; "
+           "anders is het een waarschuwing als hij nieuw is. from m import *, globals() en "
+           "locals() maken elke naam onbekend. "
            "Een sink die nieuw is in de uitvoer blokkeert altijd. Eentje die er al was blokkeert "
            "alleen als een fix voor die dreigingsklasse werd beweerd; anders is het een "
            "waarschuwing die benoemt wat is blijven staan.")
@@ -244,9 +254,13 @@ _sink("sink_shell_true", "shell=True", "shell=True",
       "subprocess.call(\"rsync \" + src, shell=True)", "subprocess.run([\"rsync\", src])")
 _sink("sink_tls_verify_off", "TLS verification off", "TLS-controle uit",
       "Certificate checking is switched off: verify= is false (False, 0, None, bool(0), ...) "
-      "in a call, also via **{...}, or an attribute is set that way (session.verify = False).",
+      "in a call, also via **{...}, or an HTTP session or client gets it (session.verify = "
+      "False, setattr, vars(session), a Session subclass); None does not count there. A CA "
+      "bundle path, certifi.where() or an SSL context counts as on.",
       "De certificaatcontrole staat uit: verify= is onwaar (False, 0, None, bool(0), ...) in "
-      "een aanroep, ook via **{...}, of een attribuut wordt zo gezet (session.verify = False).",
+      "een aanroep, ook via **{...}, of een HTTP-sessie of -client krijgt het (session.verify "
+      "= False, setattr, vars(session), een Session-subklasse); None telt daar niet. Een pad "
+      "naar een CA-bundel, certifi.where() of een SSL-context telt als aan.",
       "requests.get(url, verify=False)", "requests.get(url)")
 _sink("sink_debug_true", "debug=True", "debug=True",
       "A web app runs in debug mode, exposing an interactive console: run(...) with debug= "
@@ -255,8 +269,16 @@ _sink("sink_debug_true", "debug=True", "debug=True",
       "debug= waar.",
       "app.run(debug=True)", "app.run()")
 _sink("sink_dynamic_exec", "eval/exec on a variable", "eval/exec op een variabele",
-      "eval() or exec() on something that is not a literal.",
-      "eval() of exec() op iets dat geen literal is.",
+      "eval() or exec() on something that is not a literal, under any spelling (an alias, "
+      "builtins.eval, getattr(builtins, 'eval'), from builtins import eval as ev), or eval or "
+      "exec used as a value (map(eval, ...), a default argument), whose argument cannot be "
+      "checked. A method that happens to be called eval (model.eval) counts only when called "
+      "directly with a non-literal.",
+      "eval() of exec() op iets dat geen literal is, onder elke schrijfwijze (een alias, "
+      "builtins.eval, getattr(builtins, 'eval'), from builtins import eval as ev), of eval "
+      "of exec als waarde gebruikt (map(eval, ...), een standaardargument), waarvan het "
+      "argument niet te controleren is. Een methode die toevallig eval heet (model.eval) telt "
+      "alleen bij een directe aanroep met een niet-literal.",
       "eval(user_input)", "ast.literal_eval(user_input)")
 _sink("sink_sql_interpolated", "SQL built by interpolation", "SQL door samenvoegen",
       "A query string is built with an f-string, % or + and passed to execute().",
@@ -264,10 +286,14 @@ _sink("sink_sql_interpolated", "SQL built by interpolation", "SQL door samenvoeg
       "cur.execute(f\"SELECT * FROM t WHERE n='{n}'\")", "cur.execute(\"SELECT * FROM t WHERE n=?\", (n,))")
 _sink("sink_sql_nonparameterised", "SQL without parameters", "SQL zonder parameters",
       "execute() receives a computed string and no parameter argument, or an empty one "
-      "((), [], {}, None). A string literal, or a name assigned one once, is not computed.",
+      "((), [], {}, None, tuple(), *()). A constant query is never counted: a string, a name "
+      "bound only to strings, a class constant, text('...'). A query that is the surrounding "
+      "function's parameter is checked where that function is called.",
       "execute() krijgt een berekende string zonder parameterargument, of met een leeg "
-      "((), [], {}, None). Een stringliteral, of een naam die er één keer een krijgt, is niet "
-      "berekend.",
+      "((), [], {}, None, tuple(), *()). Een constante query telt nooit: een string, een naam "
+      "die alleen aan strings wordt gebonden, een klasseconstante, text('...'). Een query die "
+      "de parameter van de omringende functie is, wordt gecontroleerd waar die functie wordt "
+      "aangeroepen.",
       "cur.execute(query)", "cur.execute(query, params)")
 _sink("sink_weak_hash_secret", "Weak hash over a password", "Zwakke hash over wachtwoord",
       "MD5 or SHA-1 applied to password-class data. Use a password KDF (scrypt, argon2, PBKDF2).",

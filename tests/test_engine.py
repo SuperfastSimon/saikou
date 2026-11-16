@@ -743,7 +743,6 @@ def test_a_rewritten_sink_still_counts(label, before, after, check):
     "import requests\n\ndef get(url, ca):\n    s = requests.Session()\n    s.verify = ca\n"
     "    s.verify = True\n    return s.get(url)\n",
     "_e = str\n\ndef calc(e):\n    return _e(e)\n",
-    "_e = eval\n_e = str\n\ndef calc(e):\n    return _e(e)\n",
     "def find(cur, uid):\n    cur.execute(\"SELECT * FROM u WHERE id = ?\", (uid,))\n",
     "def find(cur, sql, params):\n    cur.execute(sql, params)\n",
     "QUERY = \"SELECT * FROM u\"\n\ndef every(cur):\n    cur.execute(QUERY)\n",

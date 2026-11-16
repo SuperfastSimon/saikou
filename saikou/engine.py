@@ -1564,19 +1564,45 @@ def _call_name(node: ast.Call) -> str:
 # Matching only the literal form let `shell=1`, `shell=not False`, `USE_SHELL = True` ...
 # `shell=USE_SHELL`, `**{'shell': True}`, `verify=bool(0)`, `_e = eval; _e(x)`,
 # `cur.execute(sql, ())` and `run = cur.execute; run(f"...")` through (review finding 20).
-# A name is followed only when it is bound exactly once in the whole file, by `name = value`;
-# a parameter, a loop or `with` target, an import, a call result or a name bound twice stays
-# unknown and is never flagged. A list, dict or set can change after it is bound
-# (`params.append(x)`, `kwargs['shell'] = False`), so one is followed only when its name is
-# read nowhere but as `**name`.
-_FOLD_DEPTH = 12
+# The attack round on 1.2.1 then found the next forms one token away (`1 == 1`, `int(1)`,
+# 14 x `not`, `S = T = True`, `**dict({'shell': True})`, `from builtins import eval as ev`,
+# `execute(sql, tuple())`, ...). So the checks now work in two steps:
+#   1. fold what the file itself fixes: constants and the operators, comparisons,
+#      conditional expressions and builtins on them, names bound only by plain assignments
+#      (`a = b = v`, `a, b = v, w`, several bindings that agree), class constants;
+#   2. a value at a sink they still cannot establish (a parameter, an attribute, a call, a
+#      `**mapping` that may set the keyword) is UNRESOLVED. With a claimed fix for that
+#      threat it blocks; without one it is a warning when it is new (fail closed).
+# `from m import *`, globals(), locals() and vars() can rebind any name, so they make every
+# name unknown. Folding stops after a budget of nodes, so deep or huge expressions give up
+# (and are then unresolved) instead of running long.
 _MUTABLE_DISPLAYS = (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)
+_FOLD_BUDGET = 400
+_UNKNOWN = object()
+_FOLDABLE_TYPES = (bool, int, float, complex, str, bytes, type(None), tuple, list, frozenset,
+                   dict)
+_FOLDABLE_BUILTINS = {"bool": bool, "int": int, "float": float, "str": str, "len": len,
+                      "abs": abs, "tuple": tuple, "list": list, "dict": dict,
+                      "set": frozenset, "frozenset": frozenset}
+_REFLECTIVE_CALLS = {"globals", "locals", "vars"}
+_SUBPROCESS_CALLS = {"subprocess.run", "subprocess.call", "subprocess.check_call",
+                     "subprocess.check_output", "subprocess.Popen", "subprocess.getoutput",
+                     "subprocess.getstatusoutput", "asyncio.create_subprocess_shell"}
+_HTTP_MODULES = ("requests.", "httpx.", "urllib3.", "aiohttp.")
+_SESSION_CLASSES = {"Session", "Client", "AsyncClient", "PoolManager", "session",
+                    "ClientSession"}
+_SAFE_VERIFY_CALLS = {"certifi.where", "ssl.create_default_context", "ssl.SSLContext",
+                      "truststore.SSLContext", "httpx.create_ssl_context"}
+_QUERY_CONSTRUCTORS = {"text", "SQL", "literal_column"}
+_PARAM_KEYWORDS = ("parameters", "params", "args", "vars", "bind")
 
 
 @dataclass(frozen=True)
 class _Names:
-    single: Dict[str, ast.expr]     # name -> its value, for names bound once by `name = value`
-    bound: Counter                  # how often each name is bound anywhere in the file
+    known: Dict[str, Tuple[ast.expr, ...]]   # name -> every value it is bound to, all plain
+    bound: Counter                            # how often each name is bound anywhere
+    attrs: Dict[str, ast.expr]                # class constant, set once, never assigned later
+    classes: FrozenSet[str]                   # names of classes defined in the file
 
     def builtin(self, name: str) -> bool:
         """`name` still means the builtin: the file never binds it."""
@@ -1591,19 +1617,44 @@ def _is_mutable(value: ast.expr) -> bool:
 
 def _file_names(tree: ast.AST) -> _Names:
     bound: Counter = Counter()
+    plain: Counter = Counter()      # bindings made by a form whose value is readable
     loads: Counter = Counter()
     unpacked: Counter = Counter()   # reads as `f(**name)`
-    value: Dict[str, ast.expr] = {}
+    values: Dict[str, List[ast.expr]] = {}
+    class_values: Dict[str, List[ast.expr]] = {}
+    attr_stores: Counter = Counter()
+    classes: Set[str] = set()
+    reflective = False
+
+    def bind(target: ast.expr, value: ast.expr) -> None:
+        if isinstance(target, ast.Name):
+            values.setdefault(target.id, []).append(value)
+            plain[target.id] += 1
+        elif (isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List))
+              and len(target.elts) == len(value.elts)
+              and not any(isinstance(e, ast.Starred) for e in target.elts + value.elts)):
+            for t, v in zip(target.elts, value.elts):
+                bind(t, v)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
             (loads if isinstance(node.ctx, ast.Load) else bound)[node.id] += 1
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bound[node.name] += 1
+            if isinstance(node, ast.ClassDef):
+                classes.add(node.name)
+                for stmt in node.body:
+                    if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                            and isinstance(stmt.targets[0], ast.Name)):
+                        class_values.setdefault(stmt.targets[0].id, []).append(stmt.value)
         elif isinstance(node, ast.arg):
             bound[node.arg] += 1
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
-                bound[(alias.asname or alias.name).split(".")[0]] += 1
+                if alias.name == "*":
+                    reflective = True
+                else:
+                    bound[(alias.asname or alias.name).split(".")[0]] += 1
         elif isinstance(node, ast.ExceptHandler) and node.name:
             bound[node.name] += 1
         elif isinstance(node, ast.keyword) and node.arg is None \
@@ -1613,42 +1664,236 @@ def _file_names(tree: ast.AST) -> _Names:
             captured = getattr(node, "name", None) or getattr(node, "rest", None)
             if captured:
                 bound[captured] += 1
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
-                and isinstance(node.targets[0], ast.Name):
-            value[node.targets[0].id] = node.value
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
+            attr_stores[node.attr] += 1
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+              and node.func.id in _REFLECTIVE_CALLS
+              and not (node.func.id == "vars" and node.args)):   # vars(obj) is obj.__dict__
+            reflective = True
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target, node.value)
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
                 and node.value is not None:
-            value[node.target.id] = node.value
-    single = {n: v for n, v in value.items()
-              if bound[n] == 1 and (not _is_mutable(v) or loads[n] == unpacked[n])}
-    return _Names(single, bound)
+            bind(node.target, node.value)
+        elif isinstance(node, ast.NamedExpr):
+            bind(node.target, node.value)
+    known: Dict[str, Tuple[ast.expr, ...]] = {}
+    if not reflective:
+        for name, vals in values.items():
+            if plain[name] != bound[name]:
+                continue            # also bound by a loop, a parameter, `+=`, an import ...
+            if any(_is_mutable(v) for v in vals) and loads[name] != unpacked[name]:
+                continue            # a list or dict that may change after it is bound
+            known[name] = tuple(vals)
+    attrs = {a: vs[0] for a, vs in class_values.items()
+             if len(vs) == 1 and not attr_stores[a] and not reflective}
+    return _Names(known, bound, attrs, frozenset(classes))
 
 
-def _single(expr: Optional[ast.expr], names: Optional[_Names]) -> Optional[ast.expr]:
-    """The value of a name bound once in the file, else None."""
-    if isinstance(expr, ast.Name) and names is not None:
-        return names.single.get(expr.id)
+def _same(values: Sequence[ast.expr]) -> Optional[ast.expr]:
+    """The value when every binding is the same expression, else None."""
+    first = ast.dump(values[0])
+    return values[0] if all(ast.dump(v) == first for v in values[1:]) else None
+
+
+def _bound_value(expr: ast.expr, names: Optional[_Names]) -> Optional[ast.expr]:
+    """What a name (or a class constant read as `self.X` / `Cls.X`) is bound to, when every
+    binding in the file gives it the same expression; else None."""
+    if names is None:
+        return None
+    if isinstance(expr, ast.Name):
+        values = names.known.get(expr.id)
+        return _same(values) if values else None
+    if (isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name)
+            and (expr.value.id in ("self", "cls") or expr.value.id in names.classes)):
+        return names.attrs.get(expr.attr)
     return None
 
 
 def _resolve(expr: ast.expr, names: Optional[_Names]) -> ast.expr:
-    """`expr`, or the value at the end of a chain of names each bound once."""
-    for _ in range(_FOLD_DEPTH):
-        value = _single(expr, names)
+    """`expr`, or the value at the end of a chain of names each bound to one expression."""
+    seen: Set[int] = set()
+    while id(expr) not in seen:
+        seen.add(id(expr))
+        value = _bound_value(expr, names)
         if value is None:
             break
         expr = value
     return expr
 
 
-def _truth(node: Optional[ast.expr], names: Optional[_Names] = None,
-           depth: int = 0) -> Optional[bool]:
-    """Truth value of `node` when the code itself fixes it: a constant, a literal container,
-    `not`, `and`/`or`, `bool(...)`, or a name bound once to one of these. None when unknown."""
-    if node is None or depth > _FOLD_DEPTH:
-        return None
+def _safe_binop(op: ast.operator, left: Any, right: Any) -> Any:
+    """`left op right` for small values only: a fold never builds a huge number or string."""
+    if isinstance(op, ast.Pow) and (not isinstance(right, (int, float)) or abs(right) > 64
+                                    or (isinstance(left, (int, float)) and abs(left) > 10**6)):
+        return _UNKNOWN
+    if isinstance(op, (ast.LShift, ast.RShift)) and (not isinstance(right, int) or right > 64):
+        return _UNKNOWN
+    if isinstance(op, ast.Mult) and any(isinstance(v, (str, bytes, list, tuple)) for v in (left, right)):
+        count = right if isinstance(right, int) else left
+        if not isinstance(count, int) or count > 10_000:
+            return _UNKNOWN
+    ops = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
+           ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b,
+           ast.FloorDiv: lambda a, b: a // b, ast.Mod: lambda a, b: a % b,
+           ast.Pow: lambda a, b: a ** b, ast.LShift: lambda a, b: a << b,
+           ast.RShift: lambda a, b: a >> b, ast.BitOr: lambda a, b: a | b,
+           ast.BitAnd: lambda a, b: a & b, ast.BitXor: lambda a, b: a ^ b}
+    fn = ops.get(type(op))
+    if fn is None:
+        return _UNKNOWN
+    try:
+        result = fn(left, right)
+    except Exception:       # noqa: BLE001 - any failure means "not folded"
+        return _UNKNOWN
+    if isinstance(result, int) and abs(result) > 10**100:
+        return _UNKNOWN
+    return result if isinstance(result, _FOLDABLE_TYPES) else _UNKNOWN
+
+
+_COMPARE = {ast.Eq: lambda a, b: a == b, ast.NotEq: lambda a, b: a != b,
+            ast.Lt: lambda a, b: a < b, ast.LtE: lambda a, b: a <= b,
+            ast.Gt: lambda a, b: a > b, ast.GtE: lambda a, b: a >= b,
+            ast.Is: lambda a, b: a is b, ast.IsNot: lambda a, b: a is not b,
+            ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b}
+
+
+def _fold(node: Optional[ast.AST], names: Optional[_Names], budget: List[int]) -> Any:
+    """The value of `node` when the file itself fixes it, else _UNKNOWN."""
+    budget[0] -= 1
+    if node is None or budget[0] < 0:
+        return _UNKNOWN
     if isinstance(node, ast.Constant):
-        return bool(node.value)
+        return node.value
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        value = _bound_value(node, names)
+        return _UNKNOWN if value is None else _fold(value, names, budget)
+    if isinstance(node, ast.NamedExpr):
+        return _fold(node.value, names, budget)
+    if isinstance(node, ast.UnaryOp):
+        operand = _fold(node.operand, names, budget)
+        if operand is _UNKNOWN:
+            return _UNKNOWN
+        try:
+            if isinstance(node.op, ast.Not):
+                return not operand
+            if isinstance(node.op, ast.USub):
+                return -operand
+            if isinstance(node.op, ast.UAdd):
+                return +operand
+            return ~operand
+        except Exception:   # noqa: BLE001
+            return _UNKNOWN
+    if isinstance(node, ast.BinOp):
+        left = _fold(node.left, names, budget)
+        right = _fold(node.right, names, budget)
+        if left is _UNKNOWN or right is _UNKNOWN:
+            return _UNKNOWN
+        return _safe_binop(node.op, left, right)
+    if isinstance(node, ast.BoolOp):
+        result: Any = _UNKNOWN
+        for value in node.values:
+            result = _fold(value, names, budget)
+            if result is _UNKNOWN:
+                return _UNKNOWN
+            if bool(result) == isinstance(node.op, ast.Or):
+                return result
+        return result
+    if isinstance(node, ast.Compare):
+        left = _fold(node.left, names, budget)
+        for op, comparator in zip(node.ops, node.comparators):
+            right = _fold(comparator, names, budget)
+            fn = _COMPARE.get(type(op))
+            if left is _UNKNOWN or right is _UNKNOWN or fn is None:
+                return _UNKNOWN
+            try:
+                if not fn(left, right):
+                    return False
+            except Exception:   # noqa: BLE001
+                return _UNKNOWN
+            left = right
+        return True
+    if isinstance(node, ast.IfExp):
+        test = _truth(node.test, names, budget)
+        if test is None:
+            return _UNKNOWN
+        return _fold(node.body if test else node.orelse, names, budget)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        items = []
+        for e in node.elts:
+            if isinstance(e, ast.Starred):              # (*(), x) unpacks a known sequence
+                inner = _fold(e.value, names, budget)
+                if not isinstance(inner, (tuple, list, str, frozenset)) or len(inner) > 10_000:
+                    return _UNKNOWN
+                items.extend(inner)
+                continue
+            item = _fold(e, names, budget)
+            if item is _UNKNOWN:
+                return _UNKNOWN
+            items.append(item)
+        if isinstance(node, ast.Set):
+            try:
+                return frozenset(items)
+            except TypeError:
+                return _UNKNOWN
+        return tuple(items) if isinstance(node, ast.Tuple) else items
+    if isinstance(node, ast.Dict):
+        if any(k is None for k in node.keys):
+            return _UNKNOWN
+        keys = [_fold(k, names, budget) for k in node.keys]
+        vals = [_fold(v, names, budget) for v in node.values]
+        if any(x is _UNKNOWN for x in keys + vals):
+            return _UNKNOWN
+        try:
+            return dict(zip(keys, vals))
+        except TypeError:
+            return _UNKNOWN
+    if isinstance(node, ast.Subscript):
+        container = _fold(node.value, names, budget)
+        index = _fold(node.slice, names, budget)
+        if container is _UNKNOWN or index is _UNKNOWN:
+            return _UNKNOWN
+        try:
+            result = container[index]
+        except Exception:   # noqa: BLE001
+            return _UNKNOWN
+        return result if isinstance(result, _FOLDABLE_TYPES) else _UNKNOWN
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in _FOLDABLE_BUILTINS and not node.keywords
+            and names is not None and names.builtin(node.func.id)):
+        args = [_fold(a, names, budget) for a in node.args]
+        if any(a is _UNKNOWN for a in args) or any(isinstance(a, ast.Starred) for a in node.args):
+            return _UNKNOWN
+        if any(isinstance(a, (str, bytes, list, tuple)) and len(a) > 10_000 for a in args):
+            return _UNKNOWN
+        try:
+            result = _FOLDABLE_BUILTINS[node.func.id](*args)
+        except Exception:   # noqa: BLE001
+            return _UNKNOWN
+        return result if isinstance(result, _FOLDABLE_TYPES) else _UNKNOWN
+    return _UNKNOWN
+
+
+def _truth(node: Optional[ast.AST], names: Optional[_Names] = None,
+           budget: Optional[List[int]] = None) -> Optional[bool]:
+    """Truth value of `node` when the file itself fixes it, else None. Knows more than
+    _fold: `[x]` is true whatever x is, an f-string with literal text is true, and a name
+    bound several times is known when every binding has the same truth."""
+    if budget is None:
+        budget = [_FOLD_BUDGET]
+    if node is None or budget[0] < 0:
+        return None
+    value = _fold(node, names, budget)
+    if value is not _UNKNOWN:
+        try:
+            return bool(value)
+        except Exception:   # noqa: BLE001
+            return None
+    budget[0] -= 1
+    if isinstance(node, ast.Name) and names is not None and node.id in names.known:
+        truths = {_truth(v, names, budget) for v in names.known[node.id]}
+        return truths.pop() if len(truths) == 1 else None
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         if any(not isinstance(e, ast.Starred) for e in node.elts):
             return True
@@ -1657,89 +1902,33 @@ def _truth(node: Optional[ast.expr], names: Optional[_Names] = None,
         if any(k is not None for k in node.keys):
             return True
         return False if not node.keys else None
+    if isinstance(node, ast.JoinedStr):
+        if any(isinstance(v, ast.Constant) and v.value for v in node.values):
+            return True
+        return False if not node.values else None
+    if isinstance(node, ast.NamedExpr):
+        return _truth(node.value, names, budget)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        inner = _truth(node.operand, names, depth + 1)
+        inner = _truth(node.operand, names, budget)
         return None if inner is None else not inner
     if isinstance(node, ast.BoolOp):
         # `or` is true when any operand is, `and` is false when any operand is.
-        parts = [_truth(v, names, depth + 1) for v in node.values]
+        parts = [_truth(v, names, budget) for v in node.values]
         decisive = isinstance(node.op, ast.Or)
         if decisive in parts:
             return decisive
         return None if None in parts else not decisive
+    if isinstance(node, ast.IfExp):
+        test = _truth(node.test, names, budget)
+        if test is not None:
+            return _truth(node.body if test else node.orelse, names, budget)
+        body, orelse = _truth(node.body, names, budget), _truth(node.orelse, names, budget)
+        return body if body == orelse else None
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "bool"
             and not node.keywords and len(node.args) <= 1
             and names is not None and names.builtin("bool")):
-        return _truth(node.args[0], names, depth + 1) if node.args else False
-    value = _single(node, names)
-    return None if value is None else _truth(value, names, depth + 1)
-
-
-def _kw_value(node: ast.Call, name: str, names: Optional[_Names]) -> Optional[ast.expr]:
-    """The value passed for keyword `name`: written out, or from `**{...}` / `**dict(...)`
-    (directly or through a name bound once). None when absent or unknown."""
-    for k in node.keywords:
-        if k.arg == name:
-            return k.value
-    for k in node.keywords:
-        if k.arg is not None:
-            continue
-        mapping = _resolve(k.value, names)
-        found: Optional[ast.expr] = None
-        if isinstance(mapping, ast.Dict):
-            for key, value in zip(mapping.keys, mapping.values):
-                if key is None:
-                    found = None    # `{..., **other}`: other may set it
-                elif isinstance(key, ast.Constant) and key.value == name:
-                    found = value
-        elif (isinstance(mapping, ast.Call) and isinstance(mapping.func, ast.Name)
-              and mapping.func.id == "dict" and not mapping.args
-              and names is not None and names.builtin("dict")):
-            found = next((kw.value for kw in mapping.keywords if kw.arg == name), None)
-        if found is not None:
-            return found
+        return _truth(node.args[0], names, budget) if node.args else False
     return None
-
-
-def _call_target(node: ast.Call, names: Optional[_Names]) -> ast.expr:
-    """The called expression, through names bound once to a name or attribute:
-    `_e = eval; _e(x)` calls eval, `run = cur.execute; run(q)` calls cur.execute."""
-    func = node.func
-    for _ in range(_FOLD_DEPTH):
-        value = _single(func, names)
-        if not isinstance(value, (ast.Name, ast.Attribute)):
-            break
-        func = value
-    return func
-
-
-def _is_db_call(func: ast.expr) -> bool:
-    """True when an `execute()` receiver looks like a database cursor/connection.
-
-    `execute` is a generic method name - command objects, executors and task
-    runners all use it. Requiring a DB-ish receiver removed 2/2 measured false
-    positives (`return self.execute(m)` in pydantic's decorator module).
-    """
-    recv = getattr(func, "value", None)
-    if isinstance(recv, ast.Name):
-        base = recv.id
-    elif isinstance(recv, ast.Attribute):
-        base = recv.attr
-    elif isinstance(recv, ast.Call):
-        base = _call_name(recv)
-    else:
-        return False
-    return bool(_identifier_words(base) & _DB_RECEIVERS)
-
-
-def _no_sql_params(node: ast.Call, names: Optional[_Names] = None) -> bool:
-    """No parameter argument, or an empty one: `()`, `[]`, `{}`, None."""
-    return len(node.args) < 2 or _truth(node.args[1], names) is False
-
-
-def _computed_query(expr: ast.expr, names: Optional[_Names] = None) -> bool:
-    """Not a string literal, nor a name bound once to one."""
-    return not isinstance(_resolve(expr, names), ast.Constant)
 
 
 def _is_true(node: Optional[ast.expr], names: Optional[_Names]) -> bool:
@@ -1750,76 +1939,445 @@ def _is_falsey(node: Optional[ast.expr], names: Optional[_Names]) -> bool:
     return _truth(node, names) is False
 
 
-# The literal forms only, for `_is_security_call`: which lines an analyser reports, so where
-# a bare flake8 marker hides a report. Kept literal on purpose; widening that needs
-# scripts/suppression_oracle.py with the real bandit, ruff and semgrep.
-def _kw(node: ast.Call, name: str) -> Optional[ast.expr]:
+_ABSENT, _VALUE, _OPAQUE = "absent", "value", "opaque"
+
+
+def _mapping_entry(mapping: ast.expr, name: str, names: Optional[_Names],
+                   budget: List[int]) -> Tuple[str, Optional[ast.expr]]:
+    """What a `**mapping` passes for keyword `name`: (_VALUE, expr), (_ABSENT, None), or
+    (_OPAQUE, None) when Saikou cannot tell whether it sets it."""
+    budget[0] -= 1
+    if budget[0] < 0:
+        return _OPAQUE, None
+    mapping = _resolve(mapping, names)
+    if isinstance(mapping, ast.Dict):
+        state: Tuple[str, Optional[ast.expr]] = (_ABSENT, None)
+        for key, value in zip(mapping.keys, mapping.values):     # later entries win
+            if key is None:
+                inner = _mapping_entry(value, name, names, budget)
+                if inner[0] != _ABSENT:
+                    state = inner
+            else:
+                folded = _fold(key, names, budget)
+                if folded is _UNKNOWN:
+                    state = (_OPAQUE, None)
+                elif folded == name:
+                    state = (_VALUE, value)
+        return state
+    if (isinstance(mapping, ast.Call) and isinstance(mapping.func, ast.Name)
+            and mapping.func.id == "dict" and names is not None and names.builtin("dict")):
+        state = (_ABSENT, None)
+        if len(mapping.args) > 1 or any(isinstance(a, ast.Starred) for a in mapping.args):
+            return _OPAQUE, None
+        if mapping.args:
+            arg = _resolve(mapping.args[0], names)
+            if isinstance(arg, (ast.List, ast.Tuple)):
+                for pair in arg.elts:
+                    if not (isinstance(pair, (ast.Tuple, ast.List)) and len(pair.elts) == 2):
+                        return _OPAQUE, None
+                    folded = _fold(pair.elts[0], names, budget)
+                    if folded is _UNKNOWN:
+                        state = (_OPAQUE, None)
+                    elif folded == name:
+                        state = (_VALUE, pair.elts[1])
+            else:
+                state = _mapping_entry(arg, name, names, budget)
+        for kw in mapping.keywords:
+            if kw.arg == name:
+                state = (_VALUE, kw.value)
+            elif kw.arg is None:
+                inner = _mapping_entry(kw.value, name, names, budget)
+                if inner[0] != _ABSENT:
+                    state = inner
+        return state
+    return _OPAQUE, None
+
+
+def _kw_lookup(node: ast.Call, name: str,
+               names: Optional[_Names]) -> Tuple[str, Optional[ast.expr]]:
+    """Keyword `name` of a call: written out, or from a `**mapping`."""
     for k in node.keywords:
         if k.arg == name:
-            return k.value
-    return None
+            return _VALUE, k.value
+    state: Tuple[str, Optional[ast.expr]] = (_ABSENT, None)
+    budget = [_FOLD_BUDGET]
+    for k in node.keywords:
+        if k.arg is None:
+            inner = _mapping_entry(k.value, name, names, budget)
+            if inner[0] == _VALUE:
+                return inner
+            if inner[0] == _OPAQUE:
+                state = inner
+    return state
 
 
-def _literal_true(node: Optional[ast.expr]) -> bool:
-    return isinstance(node, ast.Constant) and node.value is True
+def _kw_value(node: ast.Call, name: str, names: Optional[_Names]) -> Optional[ast.expr]:
+    """The value passed for keyword `name`, or None when absent or not known."""
+    state, value = _kw_lookup(node, name, names)
+    return value if state == _VALUE else None
 
 
-def _literal_falsey(node: Optional[ast.expr]) -> bool:
-    return isinstance(node, ast.Constant) and node.value in (False, 0, None)
+def _call_target(node: ast.Call, names: Optional[_Names]) -> ast.expr:
+    """The called expression, through names bound to a name or attribute and through
+    `getattr(x, "name")`: `_e = eval; _e(x)` calls eval, `run = cur.execute; run(q)` calls
+    cur.execute, `getattr(cur, "execute")(q)` too."""
+    func = node.func
+    seen: Set[int] = set()
+    while id(func) not in seen:
+        seen.add(id(func))
+        if (isinstance(func, ast.Call) and isinstance(func.func, ast.Name)
+                and func.func.id == "getattr" and len(func.args) >= 2
+                and names is not None and names.builtin("getattr")):
+            attr = _fold(func.args[1], names, [_FOLD_BUDGET])
+            if not isinstance(attr, str):
+                break
+            func = ast.copy_location(ast.Attribute(value=func.args[0], attr=attr, ctx=ast.Load()),
+                                     func)
+            continue
+        if isinstance(func, ast.Subscript):               # (cur.execute,)[0](q)
+            container = _resolve(func.value, names)
+            index = _fold(func.slice, names, [_FOLD_BUDGET])
+            if (isinstance(container, (ast.Tuple, ast.List)) and isinstance(index, int)
+                    and -len(container.elts) <= index < len(container.elts)
+                    and not isinstance(container.elts[index], ast.Starred)):
+                func = container.elts[index]
+                continue
+            break
+        value = _bound_value(func, names) if isinstance(func, ast.Name) else None
+        if not isinstance(value, (ast.Name, ast.Attribute, ast.Call, ast.Subscript)):
+            break
+        func = value
+    return func
 
 
-def danger_sinks(code: str) -> List[Finding]:
-    """Invariants on the hardened output that hard-fail regardless of any
-    analyser verdict. This is the 'positive proof' half of the ledger rule:
-    these sinks must be absent in the AFTER, full stop."""
+def _builtin_exec(expr: ast.expr, names: Optional[_Names], aliases: Dict[str, str]) -> str:
+    """"eval" or "exec" when `expr` is the builtin itself, under any spelling: the bare name,
+    an import alias, builtins.eval, __builtins__['eval'], getattr(builtins, 'eval'),
+    vars(builtins)['eval'] or builtins.__dict__['eval']; else ""."""
+    def is_builtins(e: ast.expr) -> bool:
+        if isinstance(e, ast.Name):
+            return e.id == "__builtins__" or aliases.get(e.id) == "builtins"
+        if (isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "vars"
+                and len(e.args) == 1):
+            return is_builtins(e.args[0])
+        if isinstance(e, ast.Attribute) and e.attr == "__dict__":
+            return is_builtins(e.value)
+        if (isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "__import__"
+                and e.args and isinstance(e.args[0], ast.Constant)):
+            return e.args[0].value == "builtins"
+        return False
+
+    if isinstance(expr, ast.Name):
+        if expr.id in ("eval", "exec") and (names is None or names.builtin(expr.id)):
+            return expr.id
+        target = aliases.get(expr.id, "")
+        return target.split(".")[-1] if target in ("builtins.eval", "builtins.exec") else ""
+    if isinstance(expr, ast.Attribute) and expr.attr in ("eval", "exec") and is_builtins(expr.value):
+        return expr.attr
+    if isinstance(expr, ast.Subscript) and is_builtins(expr.value):
+        key = _fold(expr.slice, names, [_FOLD_BUDGET])
+        return key if key in ("eval", "exec") else ""
+    if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "getattr"
+            and len(expr.args) >= 2 and is_builtins(expr.args[0])):
+        key = _fold(expr.args[1], names, [_FOLD_BUDGET])
+        return key if key in ("eval", "exec") else ""
+    return ""
+
+
+def _receiver_words(expr: ast.expr, names: Optional[_Names]) -> Set[str]:
+    """Identifier words of a call receiver, through names bound to a call or a name:
+    `c = conn.cursor(); c2 = c` reads as cursor."""
+    expr = _resolve(expr, names)
+    if isinstance(expr, ast.Name):
+        return _identifier_words(expr.id)
+    if isinstance(expr, ast.Attribute):
+        return _identifier_words(expr.attr)
+    if isinstance(expr, ast.Call):
+        return _identifier_words(_call_name(expr))
+    return set()
+
+
+def _is_db_call(func: ast.expr, names: Optional[_Names] = None) -> bool:
+    """True when an `execute()` receiver looks like a database cursor/connection.
+
+    `execute` is a generic method name - command objects, executors and task
+    runners all use it. Requiring a DB-ish receiver removed 2/2 measured false
+    positives (`return self.execute(m)` in pydantic's decorator module).
+    """
+    recv = getattr(func, "value", None)
+    return recv is not None and bool(_receiver_words(recv, names) & _DB_RECEIVERS)
+
+
+def _query_kind(query: ast.expr, names: Optional[_Names]) -> str:
+    """"constant", "computed" (visibly built from other values) or "opaque"."""
+    if _fold(query, names, [_FOLD_BUDGET]) is not _UNKNOWN:
+        return "constant"
+    if isinstance(query, ast.Name) and names is not None and query.id in names.known and all(
+            _fold(v, names, [_FOLD_BUDGET]) is not _UNKNOWN for v in names.known[query.id]):
+        return "constant"           # `sql = 'SELECT 1'` here, `sql = 'SELECT 2'` there
+    resolved = _resolve(query, names)
+    if isinstance(resolved, ast.Constant):
+        return "constant"
+    if (isinstance(resolved, ast.Call) and _call_name(resolved) in _QUERY_CONSTRUCTORS
+            and len(resolved.args) == 1
+            and _fold(resolved.args[0], names, [_FOLD_BUDGET]) is not _UNKNOWN):
+        return "constant"
+    if isinstance(resolved, ast.JoinedStr) or (
+            isinstance(resolved, ast.BinOp) and isinstance(resolved.op, (ast.Add, ast.Mod))):
+        return "computed"
+    if isinstance(resolved, ast.Call) and _call_name(resolved) in ("format", "join"):
+        return "computed"
+    return "opaque"
+
+
+def _interpolates(query: ast.expr, names: Optional[_Names]) -> bool:
+    """A built query with a part that is not a constant: an f-string field, `%` or `+` with
+    a non-constant operand, or str.format() / str.join() with one."""
+    budget = [_FOLD_BUDGET]
+    if isinstance(query, ast.JoinedStr):
+        return any(isinstance(v, ast.FormattedValue)
+                   and _fold(v.value, names, budget) is _UNKNOWN for v in query.values)
+    if isinstance(query, ast.BinOp) and isinstance(query.op, (ast.Add, ast.Mod)):
+        return any(_fold(side, names, budget) is _UNKNOWN for side in (query.left, query.right))
+    if isinstance(query, ast.Call) and _call_name(query) in ("format", "join"):
+        return any(_fold(a, names, budget) is _UNKNOWN
+                   for a in list(query.args) + [k.value for k in query.keywords])
+    return False
+
+
+def _sql_params(node: ast.Call, names: Optional[_Names]) -> str:
+    """"none" (absent or empty), "some" (known to hold something) or "unknown"."""
+    if any(isinstance(a, ast.Starred) for a in node.args):
+        # execute(sql, *()) / execute(*(sql, ())): judge the arguments as unpacked.
+        unpacked = _fold(ast.Tuple(elts=list(node.args), ctx=ast.Load()), names, [_FOLD_BUDGET])
+        if unpacked is _UNKNOWN:
+            return "unknown"
+        return "none" if len(unpacked) < 2 or not unpacked[1] else "some"
+    if len(node.args) >= 2:
+        param = node.args[1]
+    else:
+        param = next((k.value for k in node.keywords if k.arg in _PARAM_KEYWORDS), None)
+        if param is None:
+            return "unknown" if any(k.arg is None for k in node.keywords) else "none"
+    if isinstance(param, ast.Starred):
+        return "unknown"
+    truth = _truth(param, names)
+    return "none" if truth is False else ("some" if truth is True else "unknown")
+
+
+def _no_sql_params(node: ast.Call, names: Optional[_Names] = None) -> bool:
+    """No parameter argument, or an empty one: `()`, `[]`, `{}`, None, tuple(), ..."""
+    return _sql_params(node, names) == "none"
+
+
+def _session_like(expr: ast.expr, names: Optional[_Names], aliases: Dict[str, str]) -> bool:
+    """An HTTP session or client: bound to requests.Session(), httpx.Client() ..., or
+    named like one (session, client, http)."""
+    resolved = _resolve(expr, names)
+    if isinstance(resolved, ast.Call):
+        qualified = _qualified_name(resolved.func, aliases) or _call_name(resolved)
+        return qualified.split(".")[-1] in _SESSION_CLASSES
+    return bool(_receiver_words(expr, names) & {"session", "client", "http", "sess"})
+
+
+def _verify_value(value: ast.expr, names: Optional[_Names], aliases: Dict[str, str],
+                  none_counts: bool) -> str:
+    """"off", "on" or "unknown" for a value given to verify=. A CA bundle path or an SSL
+    context is "on"."""
+    folded = _fold(value, names, [_FOLD_BUDGET])
+    if folded is not _UNKNOWN:
+        if folded is None:
+            return "off" if none_counts else "on"
+        return "on" if folded else "off"
+    resolved = _resolve(value, names)
+    if isinstance(resolved, ast.Call):
+        qualified = _qualified_name(resolved.func, aliases)
+        if qualified in _SAFE_VERIFY_CALLS:
+            return "on"
+    truth = _truth(value, names)
+    if truth is True:
+        return "on"
+    return "off" if truth is False else "unknown"
+
+
+def _sink_scan(code: str) -> Tuple[List[Finding], List[Finding]]:
+    """(definite sinks, unresolved sites) of `code`; both empty when it does not parse."""
     try:
         tree = ast.parse(_without_bom(code))
     except (SyntaxError, ValueError):
-        return []
-    out: List[Finding] = []
+        return [], []
+    definite: List[Finding] = []
+    unresolved: List[Finding] = []
 
     def flag(node: ast.AST, check: str, detail: str) -> None:
-        out.append(Finding(check, Severity.HARD_FAIL, detail,
-                           getattr(node, "lineno", None)))
+        definite.append(Finding(check, Severity.HARD_FAIL, detail, getattr(node, "lineno", None)))
+
+    def unclear(node: ast.AST, check: str, detail: str) -> None:
+        unresolved.append(Finding(check, Severity.WARN, detail, getattr(node, "lineno", None)))
 
     names = _file_names(tree)
+    aliases = _import_aliases(tree)
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    # The innermost function around each call (ast.walk visits outer functions first).
+    enclosing: Dict[int, ast.AST] = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            for inner in ast.walk(fn):
+                if isinstance(inner, ast.Call):
+                    enclosing[id(inner)] = fn
+
+    def parameter(call: ast.Call, value: Optional[ast.expr]) -> Tuple[bool, Optional[ast.expr]]:
+        """(is a parameter of the function around `call`, its default or None)."""
+        fn = enclosing.get(id(call))
+        if fn is None or not isinstance(value, ast.Name):
+            return False, None
+        args = fn.args
+        positional = list(getattr(args, "posonlyargs", [])) + list(args.args)
+        defaults = [None] * (len(positional) - len(args.defaults)) + list(args.defaults)
+        for arg, default in list(zip(positional, defaults)) + list(zip(args.kwonlyargs,
+                                                                       args.kw_defaults)):
+            if arg.arg == value.id:
+                return True, default
+        return False, None
+
+    def given(call: ast.Call, value: Optional[ast.expr]) -> Optional[ast.expr]:
+        """The value to judge: a parameter with a default is judged by its default (a
+        caller that passes another value is checked at its own call)."""
+        is_param, default = parameter(call, value)
+        return default if is_param and default is not None else value
+
+    def tls_assignment(node: ast.AST, receiver: ast.expr, value: ast.expr) -> None:
+        if not _session_like(receiver, names, aliases):
+            return
+        state = _verify_value(value, names, aliases, none_counts=False)
+        if state == "off":
+            flag(node, "sink_tls_verify_off",
+                 "TLS certificate verification is disabled in the output.")
+        elif state == "unknown":
+            unclear(node, "sink_tls_verify_off",
+                    "TLS verification on a session is set to a value Saikou cannot establish.")
+
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            # `session.verify = False` turns TLS checking off just like the keyword does.
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            # `session.verify = False`, also through vars(s) / s.__dict__.
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(isinstance(t, ast.Attribute) and t.attr == "verify" for t in targets) \
-                    and _is_falsey(node.value, names):
-                flag(node, "sink_tls_verify_off",
-                     "TLS certificate verification is disabled in the output.")
+            pairs: List[Tuple[ast.expr, Optional[ast.expr]]] = [(t, node.value) for t in targets]
+            for t, v in list(pairs):        # `s.verify, x = False, 1`
+                if (isinstance(t, (ast.Tuple, ast.List)) and isinstance(v, (ast.Tuple, ast.List))
+                        and len(t.elts) == len(v.elts)):
+                    pairs += list(zip(t.elts, v.elts))
+            for t, value in pairs:
+                if isinstance(t, ast.Attribute) and t.attr == "verify" and value is not None:
+                    tls_assignment(node, t.value, value)
+                elif (isinstance(t, ast.Subscript) and value is not None
+                      and _fold(t.slice, names, [_FOLD_BUDGET]) == "verify"):
+                    holder = t.value
+                    if (isinstance(holder, ast.Call) and isinstance(holder.func, ast.Name)
+                            and holder.func.id == "vars" and holder.args):
+                        tls_assignment(node, holder.args[0], value)
+                    elif isinstance(holder, ast.Attribute) and holder.attr == "__dict__":
+                        tls_assignment(node, holder.value, value)
             continue
-        if not isinstance(node, ast.Call):
+        if isinstance(node, ast.ClassDef):
+            # A Session subclass with `verify = False` in its body.
+            bases = {_func_name(b) for b in node.bases}
+            if bases & _SESSION_CLASSES:
+                for stmt in node.body:
+                    if (isinstance(stmt, ast.Assign) and any(
+                            isinstance(t, ast.Name) and t.id == "verify" for t in stmt.targets)
+                            and _verify_value(stmt.value, names, aliases, False) == "off"):
+                        flag(stmt, "sink_tls_verify_off",
+                             "TLS certificate verification is disabled in the output.")
             continue
+        if isinstance(node, ast.ImportFrom) and node.module == "builtins":
+            for alias in node.names:
+                if alias.name in ("eval", "exec"):
+                    flag(node, "sink_dynamic_exec",
+                         f"{alias.name} is imported under another name in the output.")
+            continue
+        if not isinstance(node, (ast.Call, ast.Name, ast.Attribute, ast.Subscript)):
+            continue
+        if not isinstance(node, ast.Call) or id(node) not in called:
+            # eval/exec used as a value (an alias, map(eval, ...), a default argument): it
+            # is called somewhere Saikou cannot follow.
+            if id(node) not in called and not (isinstance(node, ast.Name)
+                                               and not isinstance(node.ctx, ast.Load)):
+                used = _builtin_exec(node, names, aliases)
+                if used:
+                    flag(node, "sink_dynamic_exec",
+                         f"{used} is used as a value in the output, so its argument cannot "
+                         f"be checked.")
+            if not isinstance(node, ast.Call):
+                continue
         func = _call_target(node, names)
         name = _func_name(func)
 
-        if _is_true(_kw_value(node, "shell", names), names):
-            flag(node, "sink_shell_true",
-                 "shell=True survives in the output; command injection sink intact.")
-        if _is_falsey(_kw_value(node, "verify", names), names):
-            flag(node, "sink_tls_verify_off",
-                 "TLS certificate verification is disabled in the output.")
+        state, value = _kw_lookup(node, "shell", names)
+        if state == _VALUE:
+            truth = _truth(given(node, value), names)
+            if truth is True:
+                flag(node, "sink_shell_true",
+                     "shell=True survives in the output; command injection sink intact.")
+            elif truth is None:
+                unclear(node, "sink_shell_true",
+                        "shell= gets a value Saikou cannot establish (a parameter, an attribute, "
+                        "a call or a name bound in several ways).")
+        elif state == _OPAQUE and _qualified_name(func, aliases) in _SUBPROCESS_CALLS:
+            unclear(node, "sink_shell_true",
+                    "A **mapping Saikou cannot read may set shell= on this subprocess call.")
+
+        state, value = _kw_lookup(node, "verify", names)
+        if state == _VALUE:
+            verdict = _verify_value(given(node, value), names, aliases, none_counts=True)
+            if verdict == "off":
+                flag(node, "sink_tls_verify_off",
+                     "TLS certificate verification is disabled in the output.")
+            elif verdict == "unknown":
+                unclear(node, "sink_tls_verify_off",
+                        "verify= gets a value Saikou cannot establish.")
+        elif state == _OPAQUE and _qualified_name(func, aliases).startswith(_HTTP_MODULES):
+            unclear(node, "sink_tls_verify_off",
+                    "A **mapping Saikou cannot read may set verify= on this HTTP call.")
+        if (_func_name(node.func) == "setattr" and len(node.args) == 3
+                and names.builtin("setattr")
+                and _fold(node.args[1], names, [_FOLD_BUDGET]) == "verify"):
+            tls_assignment(node, node.args[0], node.args[2])
+
         if name == "run" and _is_true(_kw_value(node, "debug", names), names):
             flag(node, "sink_debug_true", "debug=True survives in the output.")
 
-        if name in ("eval", "exec") and node.args and not isinstance(node.args[0], ast.Constant):
+        exec_name = _builtin_exec(func, names, aliases)
+        direct_method = (isinstance(node.func, ast.Attribute) and node.func.attr in ("eval", "exec"))
+        if (exec_name or direct_method) and node.args and not isinstance(node.args[0], ast.Constant):
             flag(node, "sink_dynamic_exec",
-                 f"{name}() on a non-literal survives in the output.")
+                 f"{exec_name or node.func.attr}() on a non-literal survives in the output.")
 
-        if name in ("execute", "executemany") and node.args and _is_db_call(func):
-            # Most specific first: an f-string or `%`/`+` concatenation is
-            # interpolation regardless of whether params were also passed.
-            if isinstance(node.args[0], (ast.JoinedStr, ast.BinOp)):
+        if name in ("execute", "executemany") and node.args and _is_db_call(func, names):
+            query = node.args[0]
+            kind = _query_kind(query, names)
+            params = _sql_params(node, names)
+            if kind == "constant":
+                pass
+            elif isinstance(query, (ast.JoinedStr, ast.BinOp)):
+                # Most specific first: an f-string or `%`/`+` concatenation is
+                # interpolation regardless of whether params were also passed.
                 flag(node, "sink_sql_interpolated",
                      "execute() receives an interpolated string; parameterise instead.")
-            elif _computed_query(node.args[0], names) and _no_sql_params(node, names):
+            elif params == "none" and (kind == "computed" or len(node.args) < 2):
                 flag(node, "sink_sql_nonparameterised",
                      "execute() receives a computed string with no parameter argument; "
                      "the SQL injection sink is intact.")
+            elif params == "some":
+                if kind == "computed" and _interpolates(_resolve(query, names), names):
+                    unclear(node, "sink_sql_interpolated",
+                            "execute() receives a query built with interpolation; the "
+                            "parameters passed alongside do not make the built part safe.")
+            elif not parameter(node, query)[0]:
+                # (A query that is the surrounding function's parameter is checked where
+                # that function is called: shared_sink_paths.)
+                unclear(node, "sink_sql_nonparameterised",
+                        "execute() receives a query Saikou cannot establish as constant, with "
+                        "parameters it cannot establish as non-empty.")
 
         if name in ("md5", "sha1"):
             parent_names = [n.id for n in ast.walk(node) if isinstance(n, ast.Name)]
@@ -1848,13 +2406,43 @@ def danger_sinks(code: str) -> List[Finding]:
                     continue
                 if strength == "weak" and not _looks_like_key_material(text, target.id):
                     continue
-                if True:
-                    out.append(Finding(
-                        "hardcoded_secret_material", Severity.HARD_FAIL,
-                        f"{target.id} is assigned a literal in the output. A "
-                        f"hardcoded salt, key or IV is not a hardening measure.",
-                        getattr(node, "lineno", None)))
-    return out
+                definite.append(Finding(
+                    "hardcoded_secret_material", Severity.HARD_FAIL,
+                    f"{target.id} is assigned a literal in the output. A "
+                    f"hardcoded salt, key or IV is not a hardening measure.",
+                    getattr(node, "lineno", None)))
+    return definite, unresolved
+
+
+# The literal forms only, for `_is_security_call`: which lines an analyser reports, so where
+# a bare flake8 marker hides a report. Kept literal on purpose; widening that needs
+# scripts/suppression_oracle.py with the real bandit, ruff and semgrep.
+def _kw(node: ast.Call, name: str) -> Optional[ast.expr]:
+    for k in node.keywords:
+        if k.arg == name:
+            return k.value
+    return None
+
+
+def _literal_true(node: Optional[ast.expr]) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+def _literal_falsey(node: Optional[ast.expr]) -> bool:
+    return isinstance(node, ast.Constant) and node.value in (False, 0, None)
+
+
+def danger_sinks(code: str) -> List[Finding]:
+    """Invariants on the hardened output that hard-fail regardless of any
+    analyser verdict. This is the 'positive proof' half of the ledger rule:
+    these sinks must be absent in the AFTER, full stop."""
+    return _sink_scan(code)[0]
+
+
+def unresolved_sinks(code: str) -> List[Finding]:
+    """Calls where a sink's value could not be established (see the comment above
+    `_Names`): a claimed fix for that threat cannot be verified while one remains."""
+    return _sink_scan(code)[1]
 
 
 def sink_delta(before: str, after: str,
@@ -1870,9 +2458,14 @@ def sink_delta(before: str, after: str,
     So: a sink NEW in the output is always a hard failure. A pre-existing sink is
     a hard failure only when the model claimed to have fixed that threat class,
     and otherwise a warning naming what was left alone.
+
+    A site whose value Saikou cannot establish (unresolved) fails closed: with a
+    claimed fix for its threat class it is a hard failure, because the fix cannot
+    be verified; without one it is a warning, and only when it is new.
     """
-    before_counts = Counter(f.check for f in danger_sinks(before))
-    after_findings = danger_sinks(after)
+    before_definite, before_unclear = _sink_scan(before)
+    after_findings, after_unclear = _sink_scan(after)
+    before_counts = Counter(f.check for f in before_definite)
     after_counts = Counter(f.check for f in after_findings)
     claimed = set(claimed_threats)
 
@@ -1892,6 +2485,21 @@ def sink_delta(before: str, after: str,
             out.append(Finding(check, Severity.WARN,
                                f"Pre-existing and not fixed: {finding.detail} This belongs in "
                                f"deferred defects.", finding.line, finding.excerpt))
+
+    before_unclear_counts = Counter(f.check for f in before_unclear)
+    after_unclear_counts = Counter(f.check for f in after_unclear)
+    for finding in after_unclear:
+        check = finding.check
+        threat = SINK_THREAT.get(check)
+        if threat in claimed:
+            out.append(Finding(check, Severity.HARD_FAIL,
+                               f"A fix for '{threat}' was claimed, but Saikou cannot verify it "
+                               f"while this remains: {finding.detail} Write the value out, or "
+                               f"do not claim the fix.", finding.line, finding.excerpt))
+        elif after_unclear_counts[check] > before_unclear_counts.get(check, 0):
+            out.append(Finding(check, Severity.WARN,
+                               f"NEW in the output and not established: {finding.detail}",
+                               finding.line, finding.excerpt))
     return out
 
 
@@ -1971,8 +2579,9 @@ def _forwarding_wrappers(tree: ast.Module) -> Dict[str, Set[int]]:
             def param_index(expr: ast.expr) -> Optional[int]:
                 return index.get(expr.id) if isinstance(expr, ast.Name) else None
 
-            # raw SQL sink: execute(param) with no (or an empty) params argument
-            if name in ("execute", "executemany") and args and _no_sql_params(node, names):
+            # raw SQL sink: execute(param) with no params argument, an empty one, or one that
+            # cannot be shown to hold something (`params=()` forwarded from the caller)
+            if name in ("execute", "executemany") and args and _sql_params(node, names) != "some":
                 i = param_index(args[0])
                 if i is not None:
                     tainted.add(i)
