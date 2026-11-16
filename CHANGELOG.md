@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.2.2 - not released yet
+
+Fixes from an attack round on 1.2.1: three attackers, every finding with a test that failed
+on 1.2.1. Three statements in the 1.2.1 notes below were not true and are corrected here.
+
+### Security
+- A UTF-8 byte-order mark at the start of a Python file switched off every parser check:
+  the file was read as "does not parse", so a new `eval()` or `shell=True`, and a no-op
+  claimed fix, passed `verify`, the hosted API and the git gate. Python itself runs such a
+  file. (Older than 1.2.1.)
+- On Windows, a `git.exe` or `bandit.exe` committed to the repository root replaced the real
+  tool when the gate ran in the checkout: Saikou saw no changed files and the change passed.
+  Both are now looked up outside the current folder and the repository.
+- Sink checks fail closed. 1.2.1 recognised more rewritten forms, and the next ones were one
+  token away (`shell=1 == 1`, `int(1)`, fourteen `not`s, `S = T = True`,
+  `**dict({'shell': True})`, `setattr(s, 'verify', False)`,
+  `from builtins import eval as ev`, `execute(sql, tuple())`). Saikou now computes what the
+  file itself fixes, and a value at a sink that it still cannot establish (a parameter
+  without a default, an attribute, a call result, a `**mapping` that may set the keyword)
+  **blocks when a fix for that threat class is claimed**; without a claim it is a warning
+  when it is new. `eval` or `exec` used as a value counts as dynamic exec. Python only.
+  A claimed fix can therefore be refused although the code is fine: write the value out, or
+  do not claim the fix.
+- Change gating skipped Python scripts without an extension for common `#!` lines
+  (`env -Spython3`, `uv run --script`, `python3.13t`, `python3-dbg`, `nice python3`), and
+  checked a Python script named `deploy.sh`, or an sh/Python polyglot, as shell. When the
+  extension and the `#!` line disagree, the more thorough language is used.
+- GitHub Action: the first push of a branch checked only the last commit, so a fake fix
+  followed by any other commit passed. The base is now the merge-base with the default
+  branch (needs `fetch-depth: 0`; otherwise the step warns).
+- Hosted API: `/harden/apply` accepted any `contract.language`, and an unknown one returned
+  `verified` for a no-op fix; it is a 422 now. A session can be used only by the token that
+  created it. With more tokens than `MAX_SESSIONS` the store keeps one session per token
+  (1.2.1 said each token keeps at least one; a newcomer still evicted another token's).
+- `saikou ui` on Windows writes the page that carries the session key under the user's
+  profile, not under `TMP`, which may be a shared folder.
+
+### Fixed
+- False positives introduced in 1.2.1: any `obj.verify = None` or `False` was reported as TLS
+  verification off (now only on an HTTP session or client, and not for `None`); a constant
+  query with an empty parameter argument was reported as SQL injection; an alias of a method
+  named `eval` was reported as dynamic exec. A query name bound to string constants in two
+  functions or branches is no longer reported (1.2.1 said so, but only for one binding).
+- `saikou harden --write` keeps CRLF line endings and a byte-order mark (it wrote LF), and
+  `saikou harden` no longer rejects every Python file that starts with a byte-order mark.
+  The local app can write a file with lone-CR line endings.
+- The switch to plain JSON mode costs no retry for any value of `retries` (1.2.1 fixed it
+  only for `retries=0`).
+- Hosted API: JSON nested too deep is a 400, not a 500; malformed JSON without a token is a
+  401; the `Authorization` scheme is matched without regard to case.
+
 ## 1.2.1 - 2026-11-10
 
 ### Security
