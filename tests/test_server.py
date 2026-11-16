@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -368,3 +369,21 @@ def test_packaged_assets():
     assert b'data-mode="hosted"' in webassets.page("hosted")
     with pytest.raises(ValueError):
         webassets.page("other")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows folders inherit the parent's access list")
+def test_the_key_page_is_not_written_under_a_shared_tmp(tmp_path, monkeypatch):
+    import tempfile
+
+    shared = tmp_path / "shared-tmp"
+    shared.mkdir()
+    for name in ("TMP", "TEMP", "TMPDIR"):
+        monkeypatch.setenv(name, str(shared))
+    monkeypatch.setattr(tempfile, "tempdir", None)          # re-read the environment
+    path = server._write_redirect_page("http://127.0.0.1:1/#t=KEY")
+    try:
+        assert not os.path.realpath(path).startswith(os.path.realpath(str(shared)))
+        assert list(shared.iterdir()) == []
+    finally:
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+        monkeypatch.setattr(tempfile, "tempdir", None)

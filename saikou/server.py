@@ -260,9 +260,17 @@ _REDIRECT_PAGE = """<!DOCTYPE html>
 
 
 def _write_redirect_page(url: str) -> str:
-    """Write a page that sends the browser to `url` into a new private temporary folder
-    (mkdtemp: 0700; the page itself 0600) and return its path."""
-    folder = tempfile.mkdtemp(prefix="saikou-ui-")
+    """Write a page that sends the browser to `url` into a new private folder and return its
+    path. On POSIX mkdtemp makes the folder 0700 and the page is 0600. Windows has no such
+    modes: a new folder inherits its parent's access list, so there the folder is made under
+    the user's own profile (%LOCALAPPDATA%), not under TMP, which may point at a shared
+    folder."""
+    base = None
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        if not os.path.isdir(base):
+            base = os.path.expanduser("~")
+    folder = tempfile.mkdtemp(prefix="saikou-ui-", dir=base)
     path = os.path.join(folder, "open.html")
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

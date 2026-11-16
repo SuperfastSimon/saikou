@@ -108,6 +108,7 @@ runs:
         INPUT_BASE: ${{ inputs.base }}
         PR_BASE: ${{ github.event.pull_request.base.sha }}
         PUSH_BEFORE: ${{ github.event.before }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         CLAIMS: ${{ inputs.claimed-threats }}
         STRICT_API: ${{ inputs.strict-api }}
         PATHS: ${{ inputs.paths }}
@@ -117,7 +118,16 @@ runs:
         unset PYTHONPATH
         base="${INPUT_BASE:-${PR_BASE:-$PUSH_BEFORE}}"
         if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-          base="$(git rev-parse HEAD~1)"
+          # First push of a branch: there is no "before". Check every commit the branch adds
+          # to the default branch; HEAD~1 alone let a fake fix in an earlier commit through.
+          base=""
+          if [ -n "$DEFAULT_BRANCH" ] && git rev-parse -q --verify "refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null; then
+            base="$(git merge-base HEAD "refs/remotes/origin/$DEFAULT_BRANCH" || true)"
+          fi
+          if [ -z "$base" ] || [ "$base" = "$(git rev-parse HEAD)" ]; then
+            base="$(git rev-parse HEAD~1)"
+            echo "::warning::saikou: no base for this push (new branch, default branch not fetched); only the last commit is checked. Use fetch-depth: 0 or set the base input."
+          fi
         fi
         args=(diff --base "$base" --head HEAD --sarif-file saikou.sarif --summary "$GITHUB_STEP_SUMMARY")
         if [ -n "$CLAIMS" ]; then args+=(--claimed-threats "$CLAIMS"); fi

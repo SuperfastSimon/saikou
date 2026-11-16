@@ -231,3 +231,48 @@ def test_the_run_step_gates_with_the_installed_engine(tmp_path):
     assert "blocked=true" in out.read_text(encoding="utf-8")
     assert "suppression" in summary.read_text(encoding="utf-8").lower()
     assert (repo / "saikou.sarif").exists()
+
+
+def test_the_first_push_of_a_branch_checks_every_commit_it_adds(tmp_path):
+    """A push that creates a branch has before = 40 zeros. The step used to diff HEAD~1 only,
+    so a fake fix followed by any other commit passed."""
+    bash = _bash()
+    if bash is None:
+        pytest.skip("needs bash (Git Bash on Windows) and git")
+    if not _installed_saikou(tmp_path):
+        pytest.skip("saikou is not installed in this interpreter (pip install -e .)")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True,
+                              text=True).stdout.strip()
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "t")
+    git("config", "commit.gpgsign", "false")
+    (repo / "svc.py").write_text(FAKE_BEFORE, encoding="utf-8")
+    git("add", ".")
+    git("commit", "-q", "-m", "base")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")      # as fetch-depth: 0 leaves it
+    git("checkout", "-q", "-b", "fix")
+    (repo / "svc.py").write_text(FAKE_AFTER, encoding="utf-8")
+    git("commit", "-q", "-am", "claims a fix, adds a suppression")
+    (repo / "NOTES.md").write_text("docs\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-q", "-m", "docs")
+
+    script = PY.sub(lambda _m: '"$PYTHON_UNDER_TEST"', dict(run_steps())["run"])
+    (tmp_path / "step.sh").write_bytes((script + "\n").encode("utf-8"))
+    out, summary = tmp_path / "output.txt", tmp_path / "summary.md"
+    env = dict(os.environ, PYTHON_UNDER_TEST=Path(sys.executable).as_posix(),
+               INPUT_BASE="", PR_BASE="", PUSH_BEFORE="0" * 40, DEFAULT_BRANCH="main",
+               CLAIMS="", STRICT_API="false", PATHS="", WARN_ONLY="", ANALYSER="false",
+               GITHUB_OUTPUT=out.as_posix(), GITHUB_STEP_SUMMARY=summary.as_posix())
+    env.pop("PYTHONPATH", None)
+    proc = subprocess.run([bash, "--noprofile", "--norc", "-eo", "pipefail",
+                           (tmp_path / "step.sh").as_posix()], cwd=repo, env=env,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=300)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "blocked=true" in out.read_text(encoding="utf-8")
