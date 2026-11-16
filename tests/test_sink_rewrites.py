@@ -243,3 +243,41 @@ def test_alias_of_a_method_named_eval_or_exec(after):
     assert_legit_passes(after)          # passed in 1.2.0
 
 
+# ---- found by comparing the old and the new engine on real code ----------------------------
+def _gate(after):
+    out = service.verify({"mode": "gate", "path": "m.py", "before": "x = 1\n", "after": after})
+    return out["blocked"], {(f["check"], f["severity"]) for f in _findings(out)}
+
+
+def test_a_method_named_eval_does_not_hide_a_call_to_the_builtin():
+    # _pytest/_code/code.py: `def eval(self, code): return eval(code, ...)`.
+    blocked, found = _gate("class Frame:\n    def eval(self, code):\n        return eval(code, {}, {})\n")
+    assert blocked and ("sink_dynamic_exec", "hard_fail") in found
+
+
+def test_eval_passed_as_a_value_warns_without_a_claim_and_blocks_with_one():
+    code = ("import unittest\n\nclass T(unittest.TestCase):\n    def test(self):\n"
+            "        self.assertRaises(SyntaxError, eval, '1 +')\n")
+    blocked, found = _gate(code)
+    assert not blocked and ("sink_dynamic_exec", "warn") in found
+    claimed = service.verify({"path": "m.py", "before": EVAL, "after": code,
+                              "claimed_threats": ["injection"]})
+    assert claimed["blocked"]
+
+
+def test_verify_from_a_parameter_that_defaults_to_none_is_not_off():
+    # litellm, pyjwt: `def f(..., verify=None): client(verify=verify)` leaves it to the caller.
+    blocked, found = _gate("import boto3\n\ndef client(s3_verify=None):\n"
+                           "    return boto3.client('s3', verify=s3_verify)\n")
+    assert not blocked and not found
+    blocked, _found = _gate("import requests\n\ndef get(url, v=False):\n"
+                            "    return requests.get(url, verify=v)\n")
+    assert blocked
+
+
+def test_a_bom_with_another_declared_encoding_still_does_not_parse():
+    # CPython refuses it ("encoding problem: utf-8 with BOM"); so must the check.
+    blocked, found = _gate(chr(0xFEFF) + "# -*- coding: latin-1 -*-\nx = 1\n")
+    assert blocked and ("parse_failure", "hard_fail") in found
+
+

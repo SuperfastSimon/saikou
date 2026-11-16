@@ -67,7 +67,13 @@ def _without_bom(code: str) -> str:
     """`code` without one leading byte-order mark. CPython runs a file that starts with a
     UTF-8 BOM, but `ast.parse` on the decoded text refuses U+FEFF, so with the mark left in
     every parser check read the file as "does not parse" and quietly switched off."""
-    return code[1:] if code.startswith(BOM) else code
+    if not code.startswith(BOM):
+        return code
+    for line in code[1:].split("\n", 2)[:2]:
+        cookie = _CODING_COOKIE.match(line)
+        if cookie and cookie.group(1).lower().replace("_", "-") not in ("utf-8", "utf8", "utf-8-sig"):
+            return code     # CPython refuses a BOM with another declared encoding; so do we
+    return code[1:]
 
 
 # ===========================================================================
@@ -2025,6 +2031,9 @@ def _call_target(node: ast.Call, names: Optional[_Names]) -> ast.expr:
     seen: Set[int] = set()
     while id(func) not in seen:
         seen.add(id(func))
+        if isinstance(func, ast.NamedExpr):               # (f := eval)(x)
+            func = func.value
+            continue
         if (isinstance(func, ast.Call) and isinstance(func.func, ast.Name)
                 and func.func.id == "getattr" and len(func.args) >= 2
                 and names is not None and names.builtin("getattr")):
@@ -2068,7 +2077,10 @@ def _builtin_exec(expr: ast.expr, names: Optional[_Names], aliases: Dict[str, st
         return False
 
     if isinstance(expr, ast.Name):
-        if expr.id in ("eval", "exec") and (names is None or names.builtin(expr.id)):
+        if expr.id in ("eval", "exec"):
+            # Also when the file binds the name somewhere (a method `def eval(self)` does not
+            # shadow the builtin inside its own class, and a real shadow is rare): a file
+            # that defines eval must not thereby hide its calls to the builtin.
             return expr.id
         target = aliases.get(expr.id, "")
         return target.split(".")[-1] if target in ("builtins.eval", "builtins.exec") else ""
@@ -2292,8 +2304,9 @@ def _sink_scan(code: str) -> Tuple[List[Finding], List[Finding]]:
         if isinstance(node, ast.ImportFrom) and node.module == "builtins":
             for alias in node.names:
                 if alias.name in ("eval", "exec"):
-                    flag(node, "sink_dynamic_exec",
-                         f"{alias.name} is imported under another name in the output.")
+                    unclear(node, "sink_dynamic_exec",
+                            f"{alias.name} is imported from builtins, possibly under another "
+                            f"name.")
             continue
         if not isinstance(node, (ast.Call, ast.Name, ast.Attribute, ast.Subscript)):
             continue
@@ -2304,9 +2317,9 @@ def _sink_scan(code: str) -> Tuple[List[Finding], List[Finding]]:
                                                and not isinstance(node.ctx, ast.Load)):
                 used = _builtin_exec(node, names, aliases)
                 if used:
-                    flag(node, "sink_dynamic_exec",
-                         f"{used} is used as a value in the output, so its argument cannot "
-                         f"be checked.")
+                    unclear(node, "sink_dynamic_exec",
+                            f"{used} is used as a value (passed on, stored, a default), so "
+                            f"Saikou cannot see what it is called with.")
             if not isinstance(node, ast.Call):
                 continue
         func = _call_target(node, names)
@@ -2328,7 +2341,11 @@ def _sink_scan(code: str) -> Tuple[List[Finding], List[Finding]]:
 
         state, value = _kw_lookup(node, "verify", names)
         if state == _VALUE:
-            verdict = _verify_value(given(node, value), names, aliases, none_counts=True)
+            judged = given(node, value)
+            # A parameter that defaults to None leaves the choice to the caller and the
+            # library's own default: not "off".
+            from_default = judged is not value
+            verdict = _verify_value(judged, names, aliases, none_counts=not from_default)
             if verdict == "off":
                 flag(node, "sink_tls_verify_off",
                      "TLS certificate verification is disabled in the output.")

@@ -270,15 +270,16 @@ _sink("sink_debug_true", "debug=True", "debug=True",
       "app.run(debug=True)", "app.run()")
 _sink("sink_dynamic_exec", "eval/exec on a variable", "eval/exec op een variabele",
       "eval() or exec() on something that is not a literal, under any spelling (an alias, "
-      "builtins.eval, getattr(builtins, 'eval'), from builtins import eval as ev), or eval or "
-      "exec used as a value (map(eval, ...), a default argument), whose argument cannot be "
-      "checked. A method that happens to be called eval (model.eval) counts only when called "
-      "directly with a non-literal.",
+      "builtins.eval, getattr(builtins, 'eval'), from builtins import eval as ev). eval or "
+      "exec used as a value (map(eval, ...), assertRaises(E, eval, s), a default argument) "
+      "cannot be established and fails closed as described below. A method that happens to "
+      "be called eval (model.eval) counts only when called directly with a non-literal.",
       "eval() of exec() op iets dat geen literal is, onder elke schrijfwijze (een alias, "
-      "builtins.eval, getattr(builtins, 'eval'), from builtins import eval as ev), of eval "
-      "of exec als waarde gebruikt (map(eval, ...), een standaardargument), waarvan het "
-      "argument niet te controleren is. Een methode die toevallig eval heet (model.eval) telt "
-      "alleen bij een directe aanroep met een niet-literal.",
+      "builtins.eval, getattr(builtins, 'eval'), from builtins import eval as ev). eval of "
+      "exec als waarde gebruikt (map(eval, ...), assertRaises(E, eval, s), een "
+      "standaardargument) is niet vast te stellen en faalt dicht zoals hieronder beschreven. "
+      "Een methode die toevallig eval heet (model.eval) telt alleen bij een directe aanroep "
+      "met een niet-literal.",
       "eval(user_input)", "ast.literal_eval(user_input)")
 _sink("sink_sql_interpolated", "SQL built by interpolation", "SQL door samenvoegen",
       "A query string is built with an f-string, % or + and passed to execute().",
