@@ -71,8 +71,12 @@ def _without_bom(code: str) -> str:
         return code
     for line in code[1:].split("\n", 2)[:2]:
         cookie = _CODING_COOKIE.match(line)
-        if cookie and cookie.group(1).lower().replace("_", "-") not in ("utf-8", "utf8", "utf-8-sig"):
-            return code     # CPython refuses a BOM with another declared encoding; so do we
+        if cookie:
+            # CPython's own rule: after a BOM the declared name must normalise to "utf-8"
+            # or "utf-8-..."; "utf8" and "latin-1" are refused, and so the BOM stays here.
+            declared = cookie.group(1)[:12].lower().replace("_", "-")
+            if not (declared == "utf-8" or declared.startswith("utf-8-")):
+                return code
     return code[1:]
 
 

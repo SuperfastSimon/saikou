@@ -281,3 +281,14 @@ def test_a_bom_with_another_declared_encoding_still_does_not_parse():
     assert blocked and ("parse_failure", "hard_fail") in found
 
 
+def test_after_a_bom_only_the_names_cpython_accepts_count_as_utf8():
+    # Measured on CPython 3.11 test data (bad_coding2.py): "utf8" after a BOM is refused.
+    bom = chr(0xFEFF)
+    for cookie in ("utf8", "U8", "utf8-sig"):
+        blocked, found = _gate(bom + "# coding: " + cookie + chr(10) + "x = 1" + chr(10))
+        assert blocked and ("parse_failure", "hard_fail") in found, cookie
+    for cookie in ("utf-8", "UTF_8", "utf-8-sig", "utf_8_sig", "utf-8-unix"):
+        blocked, found = _gate(bom + "# coding: " + cookie + chr(10) + "x = 1" + chr(10))
+        assert not blocked and not found, cookie
+
+
