@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.2 - not released yet
+## 1.2.2 - 2026-11-17
 
 Fixes from an attack round on 1.2.1: three attackers, every finding with a test that failed
 on 1.2.1. Three statements in the 1.2.1 notes below were not true and are corrected here.
@@ -22,7 +22,8 @@ on 1.2.1. Three statements in the 1.2.1 notes below were not true and are correc
   **blocks when a fix for that threat class is claimed**; without a claim it is a warning
   when it is new. `eval` or `exec` used as a value counts as dynamic exec. Python only.
   A claimed fix can therefore be refused although the code is fine: write the value out, or
-  do not claim the fix.
+  do not claim the fix. A module or class constant counts as fixed by the file; a change
+  to it from another file is not seen.
 - Change gating skipped Python scripts without an extension for common `#!` lines
   (`env -Spython3`, `uv run --script`, `python3.13t`, `python3-dbg`, `nice python3`), and
   checked a Python script named `deploy.sh`, or an sh/Python polyglot, as shell. When the
