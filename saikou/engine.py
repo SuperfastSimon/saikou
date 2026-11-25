@@ -49,7 +49,7 @@ from enum import Enum
 from functools import lru_cache
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
-__version__ = "1.2.2"
+__version__ = "1.3.0"
 
 
 def utc_now() -> str:
@@ -1043,34 +1043,43 @@ def introduced_suppressions(before: str, after: str, *, strict: bool = True,
             before_hits = _merge_hits(before_hits, more_before)
             after_hits = _merge_hits(after_hits, more_after)
             tokenized = False          # the statement check below reads the text as given
-    before_counts = Counter(k for k, _, _ in before_hits)
-    after_counts = Counter(k for k, _, _ in after_hits)
-    grown = {k: after_counts[k] - before_counts.get(k, 0)
-             for k in after_counts if after_counts[k] > before_counts.get(k, 0)}
+    def _classify(src: str, hits: List[Tuple[str, int, str]]) -> List[Tuple[str, bool, int, str]]:
+        if strict:
+            return [(k, True, ln, ex) for k, ln, ex in hits]
+        src_lines = src.splitlines()
+        kinds_present = {k for k, _, _ in hits}
+        sec_lines = _security_lines(src) if python and "flake8" in kinds_present else frozenset()
+        hash_lines = (_security_lines(src, True)
+                      if python and "usedforsecurity-flag" in kinds_present else frozenset())
+        sinks = _js_sink_lines(src) if js and "eslint" in kinds_present else frozenset()
+        classified: List[Tuple[str, bool, int, str]] = []
+        for kind, line_no, excerpt in hits:
+            # classify on the whole line: the excerpt is cut at 120 characters, and a marker
+            # behind a long call would otherwise read as a style comment
+            full = src_lines[line_no - 1] if 0 < line_no <= len(src_lines) else excerpt
+            is_sec = (is_security_suppression(kind, full)
+                      or (kind == "flake8" and line_no in sec_lines and bool(_BARE_NOQA.search(full)))
+                      or (kind == "usedforsecurity-flag" and line_no in hash_lines)
+                      or (kind == "eslint" and _eslint_covers_sink(full, line_no, sinks)))
+            classified.append((kind, is_sec, line_no, excerpt))
+        return classified
+
+    before_cls = _classify(before, before_hits)
+    after_cls = _classify(after, after_hits)
+    before_counts = Counter((k, is_sec) for k, is_sec, _, _ in before_cls)
+    after_counts = Counter((k, is_sec) for k, is_sec, _, _ in after_cls)
+    grown = {bucket: after_counts[bucket] - before_counts.get(bucket, 0)
+             for bucket in after_counts if after_counts[bucket] > before_counts.get(bucket, 0)}
     out: List[Finding] = []
-    lines = after.splitlines()
-    security_lines: Set[int] = set()
-    secret_hash_lines: Set[int] = set()
-    js_sink_lines: FrozenSet[int] = frozenset()
-    if python and ("flake8" in grown or "usedforsecurity-flag" in grown):
-        security_lines = _security_lines(after)
-        secret_hash_lines = _security_lines(after, True)
-    if js and "eslint" in grown:
-        js_sink_lines = _js_sink_lines(after)
-    for kind, line_no, excerpt in after_hits:
-        if kind not in grown:
+    for kind, is_sec, line_no, excerpt in after_cls:
+        bucket = (kind, is_sec)
+        if bucket not in grown:
             continue
-        # classify on the whole line: the excerpt is cut at 120 characters, and a marker
-        # behind a long call would otherwise read as a style comment
-        full = lines[line_no - 1] if 0 < line_no <= len(lines) else excerpt
-        if strict or is_security_suppression(kind, full) or (
-                kind == "flake8" and line_no in security_lines and _BARE_NOQA.search(full)) or (
-                kind == "usedforsecurity-flag" and line_no in secret_hash_lines) or (
-                kind == "eslint" and _eslint_covers_sink(full, line_no, js_sink_lines)):
+        if is_sec:
             out.append(Finding(
                 "suppression_introduced", Severity.HARD_FAIL,
                 f"A {kind} analyser suppression appears in the output that was not in the "
-                f"input (+{grown[kind]}). Silencing an analyser is not hardening, and it "
+                f"input (+{grown[bucket]}). Silencing an analyser is not hardening, and it "
                 f"would make a before/after finding delta read as an improvement.",
                 line_no, excerpt))
         else:
@@ -1081,7 +1090,7 @@ def introduced_suppressions(before: str, after: str, *, strict: bool = True,
     if python and tokenized and any(kind in _SECURITY_SUPPRESSIONS or kind == "flake8"
                                     for kind, _, _ in after_hits):
         for kind, line_no, excerpt in _attached_suppressions(before, after, before_hits, after_hits):
-            if kind in grown:
+            if (kind, True) in grown:
                 continue                   # the count above already reports this kind
             out.append(Finding(
                 "suppression_introduced", Severity.HARD_FAIL,
@@ -1090,7 +1099,7 @@ def introduced_suppressions(before: str, after: str, *, strict: bool = True,
                 f"Silencing an analyser is not hardening.", line_no, excerpt))
     if js and any(kind in _SECURITY_SUPPRESSIONS or kind == "eslint" for kind, _, _ in after_hits):
         for kind, line_no, excerpt in _attached_js_suppressions(before, after, before_hits, after_hits):
-            if kind in grown:
+            if (kind, True) in grown:
                 continue
             out.append(Finding(
                 "suppression_introduced", Severity.HARD_FAIL,
@@ -2409,13 +2418,14 @@ def _sink_scan(code: str) -> Tuple[List[Finding], List[Finding]]:
 
     # Hardcoded key / salt / IV assigned to a secret-ish name from a literal.
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Constant) \
                 and isinstance(node.value.value, (str, bytes)) and node.value.value:
             literal = node.value.value
             text = literal.decode("utf-8", "replace") if isinstance(literal, bytes) else literal
             if _NOT_A_SECRET_VALUE.match(text):
                 continue
-            for target in node.targets:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
                 if not isinstance(target, ast.Name):
                     continue
                 strength = _secret_name_strength(target.id)
@@ -2544,12 +2554,13 @@ def unwired_guards(code: str) -> List[Finding]:
         body = fn.body if not isinstance(fn, ast.Module) else fn.body
         assigned: Dict[str, ast.AST] = {}
         for stmt in ast.walk(ast.Module(body=body, type_ignores=[])):
-            if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Call):
+            if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and isinstance(stmt.value, ast.Call):
                 call = _call_name(stmt.value)
                 if not (_GUARDISH.search(call)
                         or (_PATHISH.match(call) and not isinstance(fn, ast.Module))):
                     continue
-                for t in stmt.targets:
+                targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+                for t in targets:
                     if isinstance(t, ast.Name):
                         assigned[t.id] = stmt
         if not assigned:
@@ -2575,49 +2586,64 @@ def unwired_guards(code: str) -> List[Finding]:
     return out
 
 
-def _forwarding_wrappers(tree: ast.Module) -> Dict[str, Set[int]]:
-    """User-defined functions that forward a parameter straight into a raw sink.
+def _forwarding_wrappers(tree: ast.Module
+                         ) -> Tuple[Dict[str, Tuple[Set[int], Set[str]]],
+                                    Dict[str, Tuple[Set[int], Set[str]]]]:
+    """User-defined functions and methods that forward a parameter straight into a raw sink.
 
     `def run_query(sql): cur.execute(sql)` is a SQL sink hidden one hop away: the
     interpolation happens at the *call* site, so a per-statement sink check sees
-    only a plain Name at `execute` and misses it. Returns {func_name: {tainted
-    positional-arg indices}}.
+    only a plain Name at `execute` and misses it. Returns (functions, methods),
+    each mapping name -> ({tainted positional indices}, {tainted keyword names}).
     """
-    wrappers: Dict[str, Set[int]] = {}
+    functions: Dict[str, Tuple[Set[int], Set[str]]] = {}
+    methods: Dict[str, Tuple[Set[int], Set[str]]] = {}
     names = _file_names(tree)
+    class_methods: Set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    class_methods.add(id(item))
+
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        params = [a.arg for a in list(getattr(fn.args, "posonlyargs", [])) + list(fn.args.args)]
-        index = {name: i for i, name in enumerate(params)}
-        tainted: Set[int] = set()
+        pos_params = [a.arg for a in list(getattr(fn.args, "posonlyargs", [])) + list(fn.args.args)]
+        is_method = id(fn) in class_methods and bool(pos_params) and pos_params[0] in ("self", "cls")
+        call_pos = pos_params[1:] if is_method else pos_params
+        pos_index = {name: i for i, name in enumerate(call_pos)}
+        kw_names = set(call_pos) | {a.arg for a in fn.args.kwonlyargs}
+        tainted_pos: Set[int] = set()
+        tainted_kw: Set[str] = set()
+
+        def mark(expr: ast.expr) -> None:
+            if not isinstance(expr, ast.Name):
+                return
+            if expr.id in pos_index:
+                tainted_pos.add(pos_index[expr.id])
+            if expr.id in kw_names:
+                tainted_kw.add(expr.id)
+
         for node in ast.walk(fn):
             if not isinstance(node, ast.Call):
                 continue
             name = _func_name(_call_target(node, names))
             args = node.args
-
-            def param_index(expr: ast.expr) -> Optional[int]:
-                return index.get(expr.id) if isinstance(expr, ast.Name) else None
-
             # raw SQL sink: execute(param) with no params argument, an empty one, or one that
             # cannot be shown to hold something (`params=()` forwarded from the caller)
             if name in ("execute", "executemany") and args and _sql_params(node, names) != "some":
-                i = param_index(args[0])
-                if i is not None:
-                    tainted.add(i)
+                mark(args[0])
             # shell / os.system / eval / exec forwarding a parameter
             if _is_true(_kw_value(node, "shell", names), names) and args:
-                i = param_index(args[0])
-                if i is not None:
-                    tainted.add(i)
+                mark(args[0])
             if name in ("system", "eval", "exec") and args:
-                i = param_index(args[0])
-                if i is not None:
-                    tainted.add(i)
-        if tainted:
-            wrappers[fn.name] = tainted
-    return wrappers
+                mark(args[0])
+        if tainted_pos or tainted_kw:
+            target_map = methods if is_method else functions
+            prev_pos, prev_kw = target_map.get(fn.name, (set(), set()))
+            target_map[fn.name] = (prev_pos | tainted_pos, prev_kw | tainted_kw)
+    return functions, methods
 
 
 def _is_interpolated(expr: ast.expr, scope_assigns: Dict[str, ast.expr]) -> bool:
@@ -2645,8 +2671,8 @@ def shared_sink_paths(code: str) -> List[Finding]:
         tree = ast.parse(_without_bom(code))
     except (SyntaxError, ValueError):
         return []
-    wrappers = _forwarding_wrappers(tree)
-    if not wrappers:
+    functions, methods = _forwarding_wrappers(tree)
+    if not functions and not methods:
         return []
 
     out: List[Finding] = []
@@ -2660,22 +2686,39 @@ def shared_sink_paths(code: str) -> List[Finding]:
             if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 \
                     and isinstance(stmt.targets[0], ast.Name):
                 assigns[stmt.targets[0].id] = stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) \
+                    and stmt.value is not None:
+                assigns[stmt.target.id] = stmt.value
         for node in ast.walk(ast.Module(body=scope, type_ignores=[])):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            if not isinstance(node, ast.Call):
                 continue
-            tainted = wrappers.get(node.func.id)
+            if isinstance(node.func, ast.Name):
+                label = node.func.id
+                tainted = functions.get(label)
+            elif (isinstance(node.func, ast.Attribute)
+                  and isinstance(node.func.value, ast.Name)
+                  and node.func.value.id in ("self", "cls")):
+                label = f"{node.func.value.id}.{node.func.attr}"
+                tainted = methods.get(node.func.attr)
+            else:
+                continue
             if not tainted:
                 continue
-            for i, arg in enumerate(node.args):
-                key = (node.func.id, getattr(node, "lineno", None))
-                if i in tainted and _is_interpolated(arg, assigns) and key not in seen:
-                    seen.add(key)
-                    out.append(Finding(
-                        "shared_sink_injection_path", Severity.HARD_FAIL,
-                        f"{node.func.id}() forwards its argument into a raw sink, and here it "
-                        f"is called with an interpolated string. Parameterising other callers "
-                        f"does not close this path; the sink itself must be fixed.",
-                        getattr(node, "lineno", None)))
+            tainted_pos, tainted_kw = tainted
+            hit = any(i in tainted_pos and _is_interpolated(arg, assigns)
+                      for i, arg in enumerate(node.args))
+            if not hit:
+                hit = any(kw.arg in tainted_kw and _is_interpolated(kw.value, assigns)
+                          for kw in node.keywords if kw.arg is not None)
+            key = (label, getattr(node, "lineno", None))
+            if hit and key not in seen:
+                seen.add(key)
+                out.append(Finding(
+                    "shared_sink_injection_path", Severity.HARD_FAIL,
+                    f"{label}() forwards its argument into a raw sink, and here it "
+                    f"is called with an interpolated string. Parameterising other callers "
+                    f"does not close this path; the sink itself must be fixed.",
+                    getattr(node, "lineno", None)))
     return out
 
 
@@ -2875,7 +2918,7 @@ def js_unwired_guards(code: str) -> List[Finding]:
     src = _js_strip(code)
     out: List[Finding] = []
     assign = re.compile(
-        r"(?m)^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?"
+        r"(?m)(?:^|[;{])\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?"
         r"([A-Za-z_$][\w$.]*)\s*\(")
     for m in assign.finditer(src):
         var, call = m.group(1), m.group(2)
@@ -3345,6 +3388,12 @@ class AnalyserResult:
     error: Optional[str] = None
 
 
+def _path_folders(value: str, *, windows: bool) -> List[str]:
+    """PATH entries. Windows allows an entry in double quotes ("C:\\Program Files\\Git\\cmd")."""
+    parts = value.split(";" if windows else ":")
+    return [p.strip('"') for p in parts] if windows else parts
+
+
 def trusted_executable(name: str, *untrusted: str) -> Optional[str]:
     """Absolute path of program `name`, or None when it is not installed.
 
@@ -3364,8 +3413,8 @@ def trusted_executable(name: str, *untrusted: str) -> Optional[str]:
     if os.name == "nt":
         exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
     folders = [os.path.dirname(os.path.abspath(sys.executable))]
-    folders += [p for p in os.environ.get("PATH", "").split(os.pathsep)
-                if p and os.path.isabs(p) and not inside(p, roots)]
+    raw_path = _path_folders(os.environ.get("PATH", ""), windows=os.name == "nt")
+    folders += [p for p in raw_path if p and os.path.isabs(p) and not inside(p, roots)]
     for folder in folders:
         for ext in exts:
             candidate = os.path.join(folder, name + ext)

@@ -761,5 +761,5 @@ window.SAIKOU_DATA = {
   }
  ],
  "selftest_checks": 123,
- "version": "1.2.2"
+ "version": "1.3.0"
 };

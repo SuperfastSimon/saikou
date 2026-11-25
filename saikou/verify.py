@@ -7,6 +7,7 @@ import difflib
 import posixpath
 import re
 import subprocess
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -34,7 +35,7 @@ _PARSER_CHECKS = {
     "guard_computed_but_unused", "shared_sink_injection_path", "api_break",
     "must_preserve_violated", "hardcoded_secret_material",
 }
-_TOOL_CHECKS = {"findings_suppressed_not_fixed", "new_analyser_findings"}
+_TOOL_CHECKS = {"findings_suppressed_not_fixed", "new_analyser_findings", "new_findings"}
 
 
 def provenance_of(check: str) -> str:
@@ -141,6 +142,24 @@ def verify_pair(before: str, after: str, *, path: str, language: Optional[str] =
     if not expect_change and is_test_path(path):
         findings = _demote_test_secrets(findings, after)
     checks = checks_run(lang, expect_change=expect_change)
+    if lang in ("javascript", "typescript"):
+        from . import treesitter
+        if treesitter.available(lang):
+            ast_findings, used_ast = treesitter.js_ts_ast_checks(after, lang)
+            if used_ast:
+                checks.append("treesitter-js-ts-ast")
+                # Only what the change adds: a finding (check + detail) the BEFORE version already
+                # had is left to the structural checks and their pre-existing rules, so gating an
+                # untouched pattern stays quiet (lines shift, so the detail is the key, not the line).
+                before_ast = (Counter((f.check, f.detail)
+                                      for f in treesitter.js_ts_ast_checks(before, lang)[0])
+                              if before.strip() else Counter())
+                after_ast = Counter((f.check, f.detail) for f in ast_findings)
+                existing = {(f.check, f.line) for f in findings}
+                for af in ast_findings:
+                    key = (af.check, af.detail)
+                    if after_ast[key] > before_ast[key] and (af.check, af.line) not in existing:
+                        findings.append(af)
     report = FileReport(path, lang, tier, change, findings, checks)
 
     if lang == "python" and before.strip():
@@ -213,6 +232,7 @@ _WEAKEN = re.compile(r"(?i)\b(?:skips?|exclude[sd]?|exclusions?|ignores?|ignored
                      r"severity|confidence|nosec|baseline|per-file-ignores|extend-ignore|"
                      r"allowlist|whitelist|paths-ignore|off)\b")
 _S_CODES = re.compile(r"""(?:["'\s,=\[]|^)S\d{0,3}(?:["'\s,\]]|$)""")
+_ESLINT_OFF = re.compile(r"""(?i):\s*(?:\[\s*)?(?:["'](?:off|0)["']|\boff\b|0(?![\d.]))""")
 
 
 def _basename(path: str) -> str:
@@ -244,7 +264,8 @@ def _section_at(lines: List[str], line_no: int) -> str:
     return ""
 
 
-def config_weakening(path: str, before: str, after: str, change: str) -> FileReport:
+def config_weakening(path: str, before: str, after: str, change: str,
+                     warn_only: Iterable[str] = ()) -> FileReport:
     """Hard-fail changes that weaken a SECURITY analyser's configuration; warn on
     changes that relax style/type linters. Comments and unrelated keys are quiet."""
     name = _basename(path)
@@ -289,7 +310,7 @@ def config_weakening(path: str, before: str, after: str, change: str) -> FileRep
             elif re.search(r"ruff|flake8|pylint|mypy|pyright|pycodestyle|isort", section):
                 warn(line, text, f"[{section}] in {name}: a style/type linter was relaxed.")
         elif name.startswith(".eslintrc") or name.startswith("eslint.config."):
-            if _SECURITY_RULE_NAMES.search(text) and re.search(r"""(?i)["']?(?:off|0)["']?""", text):
+            if _SECURITY_RULE_NAMES.search(text) and _ESLINT_OFF.search(text):
                 hard(line, text, f"A security lint rule is switched off in {name}.")
             elif _WEAKEN.search(text):
                 warn(line, text, f"ESLint configuration relaxed in {name}.")
@@ -303,7 +324,7 @@ def config_weakening(path: str, before: str, after: str, change: str) -> FileRep
                 warn(line, text, f"golangci-lint configuration relaxed in {name}.")
         elif _WEAKEN.search(text):
             warn(line, text, f"Lint configuration relaxed in {name}.")
-    return FileReport(path, "config", Tier.STRUCTURAL, change, findings,
+    return FileReport(path, "config", Tier.STRUCTURAL, change, _demote(findings, warn_only),
                       ["analyser-config-diff"])
 
 
@@ -427,6 +448,7 @@ def changed_files(base: str, *, head: Optional[str] = None, staged: bool = False
 
     files: List[ChangedFile] = []
     notes: List[str] = []
+    root: Optional[str] = None
     for old_mode, new_mode, status, path in entries:
         change = "added" if status == "A" else "modified"
         before_bytes = (b"" if status == "A" or old_mode not in _REGULAR
@@ -446,7 +468,8 @@ def changed_files(base: str, *, head: Optional[str] = None, staged: bool = False
         elif staged:
             after_bytes = _git(["show", f":{path}"], cwd)
         else:
-            root = _git(["rev-parse", "--show-toplevel"], cwd).decode().strip()
+            if root is None:
+                root = _git(["rev-parse", "--show-toplevel"], cwd).decode().strip()
             try:
                 with open(f"{root}/{path}", "rb") as fh:
                     after_bytes = fh.read()

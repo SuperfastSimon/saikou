@@ -46,6 +46,22 @@ inputs:
     description: "Fail the job when a hard fail is found."
     required: false
     default: "true"
+  from-sarif:
+    description: "Optional SARIF 2.1.0 file to derive per-file claimed threats from."
+    required: false
+    default: ""
+  policy:
+    description: "Optional .saikou.toml policy file (must-preserve rules, time-bounded waivers). Read from the base commit, so a pull request cannot loosen its own gate."
+    required: false
+    default: ""
+  evidence-file:
+    description: "Optional path to write a deterministic Evidence Bundle JSON."
+    required: false
+    default: ""
+  comment-pr:
+    description: "Post or update a sticky pull-request comment with findings (requires pull-requests: write)."
+    required: false
+    default: "false"
 
 outputs:
   blocked:
@@ -114,6 +130,10 @@ runs:
         PATHS: ${{ inputs.paths }}
         WARN_ONLY: ${{ inputs.warn-only }}
         ANALYSER: ${{ inputs.analyser }}
+        FROM_SARIF: ${{ inputs.from-sarif }}
+        POLICY: ${{ inputs.policy }}
+        EVIDENCE_FILE: ${{ inputs.evidence-file }}
+        COMMENT_PR: ${{ inputs.comment-pr }}
       run: |
         unset PYTHONPATH
         base="${INPUT_BASE:-${PR_BASE:-$PUSH_BEFORE}}"
@@ -134,6 +154,10 @@ runs:
         if [ "$STRICT_API" = "true" ]; then args+=(--strict-api); fi
         if [ -n "$WARN_ONLY" ]; then args+=(--warn-only "$WARN_ONLY"); fi
         if [ "$ANALYSER" = "true" ]; then args+=(--analyser); fi
+        if [ -n "$FROM_SARIF" ]; then args+=(--from-sarif "$FROM_SARIF"); fi
+        if [ -n "$POLICY" ]; then args+=(--policy "$POLICY"); fi
+        if [ -n "$EVIDENCE_FILE" ]; then args+=(--evidence-file "$EVIDENCE_FILE"); fi
+        if [ "$COMMENT_PR" = "true" ]; then args+=(--pr-comment-file saikou-pr-comment.md); fi
         if [ -n "$PATHS" ]; then read -ra extra <<< "$PATHS"; args+=(-- "${extra[@]}"); fi
         set +e
         python -I -m saikou "${args[@]}"
@@ -142,11 +166,32 @@ runs:
         if [ "$code" -ge 2 ]; then echo "::error::saikou failed to run (exit $code)"; exit "$code"; fi
         if [ "$code" -eq 1 ]; then echo "blocked=true" >> "$GITHUB_OUTPUT"; else echo "blocked=false" >> "$GITHUB_OUTPUT"; fi
 
-    - if: steps.gate.outputs.skipped != 'true' && inputs.upload-sarif == 'true' && always()
+    - if: steps.gate.outputs.skipped != 'true' && inputs.upload-sarif == 'true' && steps.run.outcome == 'success'
       uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
       with:
         sarif_file: saikou.sarif
         category: saikou
+
+    - if: steps.gate.outputs.skipped != 'true' && inputs.comment-pr == 'true' && steps.run.outcome == 'success' && github.event.pull_request.number
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        # One sticky comment per pull request: update ours (found by its marker) or create it.
+        # Never fails the job: a fork's read-only token or a runner without gh only warns.
+        marker='<!-- saikou-verify-comment -->'
+        if ! command -v gh >/dev/null; then echo "::warning::saikou: gh is not installed, PR comment skipped"; exit 0; fi
+        id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+          --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)" || id=""
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@saikou-pr-comment.md >/dev/null \
+            || echo "::warning::saikou: could not update the PR comment (needs pull-requests: write)"
+        else
+          gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@saikou-pr-comment.md >/dev/null \
+            || echo "::warning::saikou: could not post the PR comment (needs pull-requests: write)"
+        fi
 
     - if: steps.gate.outputs.skipped != 'true' && inputs.fail-on-findings == 'true' && steps.run.outputs.blocked == 'true'
       shell: bash

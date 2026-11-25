@@ -335,10 +335,9 @@ async def intake(request: Request, caller: str = Depends(rate_limit)) -> dict:
 async def apply(request: Request, caller: str = Depends(rate_limit)) -> dict:
     body = _model(ApplyBody, await _json(request))
     declared = body.contract.language
-    if declared and normalise_language(declared) == "unknown" \
-            and declared.strip().lower() != "unknown":
-        # Before the session is spent: an unknown language would drop the checks to the
-        # "asserted" tier and a no-op fix would come back verified.
+    if declared and normalise_language(declared) == "unknown":
+        # Before the session is spent: an unknown language (including literal "unknown")
+        # would drop the checks to the "asserted" tier and bypass parser checks.
         raise ServiceError(422, "bad_field", f"Unknown language {declared!r}.")
     try:
         config = LLMConfig.from_env()
