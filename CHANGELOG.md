@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.3.0 - 2026-11-25
+
+Five additions and the fixes from the 1.2.2 audit.
+
+### Added
+- `--from-sarif FILE`: the claimed threats per file are taken from a SARIF 2.1.0 report. The
+  file has a size limit and a path that climbs out of the repository (`..`) is rejected.
+- `--policy .saikou.toml`: `warn_only`, `must_preserve`, `strict_api`, `exclude_paths` and
+  waivers. A waiver needs a reason, an owner and an expiry date; an expired waiver is ignored
+  and reported. In `saikou diff` the policy is read from the BASE commit, so a change cannot
+  loosen its own gate. A new or changed policy takes effect once it is merged.
+- `--evidence-file FILE`: an Evidence Bundle as JSON with a SHA-256 digest. With
+  `SAIKOU_SIGNING_KEY` set (16 characters or more, never on the command line) it also carries
+  an HMAC-SHA256 seal. That is a shared-key seal: it shows the bundle was not changed by anyone
+  without the key. Anyone holding the key can produce a valid bundle. It is not a public-key
+  signature.
+- `saikou mcp`: a read-only MCP server over stdio with the tools `saikou_verify`,
+  `saikou_verify_batch` and `saikou_checks`.
+- `--pr-comment-file FILE` and the Action input `comment-pr`: one sticky pull request comment,
+  updated in place. Without `pull-requests: write` (for example on a fork) the step warns
+  instead of failing.
+- Optional extra `saikou[treesitter]`: extra JS/TS guard checks on a tree-sitter syntax tree.
+  The tier stays `structural`, because parts of these checks still match text inside tree
+  nodes. Only findings the change adds count; findings already in the old version do not.
+- Action inputs: `from-sarif`, `policy`, `evidence-file`, `comment-pr`.
+
+### Fixed
+- A style marker added next to an existing security marker no longer escalates to a hard fail,
+  and a new security marker still blocks when a style one exists.
+- ESLint rule options that contain a 0 digit (such as `["error", { max: 10 }]`) are no
+  longer read as "off". An option whose value is exactly `0` still is.
+- Annotated assignments (`x: str = ...`) are checked for hardcoded secrets and unused guards.
+- Wrapper sinks are found through keyword arguments, `self.` and `cls.` methods and annotated
+  assignments.
+- `warn_only` applies to analyser config checks.
+- `new_findings` has provenance `tool`.
+- SARIF rule descriptions come from the catalogue for every check.
+- The Action uploads SARIF only when the run step succeeded.
+- `/harden/apply` refuses the literal language `unknown`.
+- Quoted entries in a Windows `PATH` are found.
+- The JS unused-guard check also reads one-line blocks
+  (`function f(x) { const safe = sanitize(x); return x; }`).
+
+### Measured
+Old and new engine were compared on 695 Python files (pip, fastapi, starlette, httpx, bandit,
+pydantic) and 3,518 JS/TS files (express, lodash, axios, typeorm, socket.io and their
+dependencies) in gating, new-file and verify mode: no differences. With the tree-sitter extra
+installed, gating false blocks 0. This covers those projects only.
+
 ## 1.2.2 - 2026-11-17
 
 Fixes from an attack round on 1.2.1: three attackers, every finding with a test that failed

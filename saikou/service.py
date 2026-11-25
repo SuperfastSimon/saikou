@@ -238,7 +238,8 @@ def _one(body: dict, limits: Limits, mode: str, *,
     use_analyser = _bool(body, "analyser")
     if mode == "gate" and is_analyser_config(path):
         return functools.partial(config_weakening, path, before, after,
-                                 "modified" if before else "added")
+                                 "modified" if before else "added",
+                                 _strs(body, "warn_only", max_items=40))
     return functools.partial(
         verify_pair, before, after, path=path, language=lang, claimed_threats=_threats(body),
         strict_api=_bool(body, "strict_api"), must_preserve=_strs(body, "must_preserve", max_items=200),
@@ -343,7 +344,7 @@ def git_diff(body: Any, limits: Optional[Limits] = None) -> dict:
             reports.append(unreadable_report(cf, warn_only))
             continue
         if is_analyser_config(cf.path):
-            reports.append(config_weakening(cf.path, cf.before, cf.after, cf.change))
+            reports.append(config_weakening(cf.path, cf.before, cf.after, cf.change, warn_only))
             continue
         lang = cf.language or "unknown"
         if lang == "unknown":

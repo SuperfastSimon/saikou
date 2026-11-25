@@ -402,7 +402,7 @@ _c("unsupported_fix_claims", "mechanical", "warn", "harden", "verify",
       "unverified.",
       "Het model beweert fixes maar de analyzer bevestigt nul verdwenen bevindingen. Behandel de "
       "beweringen als onbevestigd."))
-_c("new_findings", "mechanical", "warn", "harden", "verify",
+_c("new_findings", "tool", "warn", "harden", "verify",
    _t("Analyser findings not present in the input", "Analyzer-bevindingen die niet in de invoer zaten"),
    _t("The hardened output has analyser findings the original did not.",
       "De geharde uitvoer heeft analyzer-bevindingen die het origineel niet had."))

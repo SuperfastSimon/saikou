@@ -396,3 +396,10 @@ def test_rate_limit_holds_under_concurrent_requests(monkeypatch):
     for t in threads:
         t.join(10)
     assert sorted(results, key=str) == [429, "caller"]
+
+
+def test_apply_refuses_an_unknown_language_before_the_session_is_used(client):
+    for lang in ("unknown", "Unknown", "cobol"):
+        _err(client.post("/harden/apply", json={"session_id": "no-such-session",
+                                                "contract": {"language": lang}}, headers=AUTH),
+             422, "bad_field")

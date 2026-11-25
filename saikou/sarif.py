@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Dict, List, Sequence
+import json
+import posixpath
+import re
+from pathlib import Path
+from typing import Dict, List, Sequence, Tuple
+from urllib.parse import unquote
 
-from .engine import Severity, __version__
+from .catalog import BY_ID as CATALOG_BY_ID
+from .engine import Severity, __version__, normalise_threats
 from .verify import FileReport, provenance_of
 
 RULE_HELP: Dict[str, str] = {
@@ -32,6 +38,15 @@ RULE_HELP: Dict[str, str] = {
 }
 
 
+def _rule_description(check: str) -> str:
+    if check in RULE_HELP:
+        return RULE_HELP[check]
+    entry = CATALOG_BY_ID.get(check)
+    if entry:
+        return entry["title"]["en"]
+    return check.replace("_", " ")
+
+
 def _fingerprint(path: str, check: str, detail: str) -> str:
     return hashlib.sha256(f"{path}|{check}|{detail}".encode("utf-8")).hexdigest()[:32]
 
@@ -44,7 +59,7 @@ def to_sarif(reports: Sequence[FileReport]) -> dict:
             if f.check not in rules:
                 rules[f.check] = {
                     "id": f.check, "name": f.check,
-                    "shortDescription": {"text": RULE_HELP.get(f.check, f.check.replace("_", " "))},
+                    "shortDescription": {"text": _rule_description(f.check)},
                     "properties": {"provenance": provenance_of(f.check)},
                 }
             results.append({
@@ -71,3 +86,84 @@ def to_sarif(reports: Sequence[FileReport]) -> dict:
             "results": results,
         }],
     }
+
+
+_SARIF_RULE_HINTS: Dict[str, str] = {
+    "B102": "injection", "B307": "injection", "B602": "injection", "B603": "injection",
+    "B604": "injection", "B605": "injection", "B608": "injection", "B609": "injection",
+    "S102": "injection", "S307": "injection", "S602": "injection", "S608": "injection",
+    "B301": "deserialization", "B302": "deserialization", "B506": "deserialization",
+    "S301": "deserialization", "S506": "deserialization",
+    "B303": "crypto", "B304": "crypto", "B305": "crypto", "B311": "crypto", "B324": "crypto",
+    "S303": "crypto", "S324": "crypto",
+    "B105": "secrets_handling", "B106": "secrets_handling", "B107": "secrets_handling",
+    "S105": "secrets_handling", "S106": "secrets_handling", "S107": "secrets_handling",
+    "B501": "ssrf", "B502": "ssrf", "B310": "ssrf", "S501": "ssrf", "S310": "ssrf",
+    "B201": "untrusted_input", "S201": "untrusted_input",
+}
+
+
+def _normalise_sarif_uri(uri: str) -> str:
+    cleaned = unquote(uri or "").strip().replace("\\", "/")
+    if cleaned.startswith("file://"):
+        cleaned = cleaned[len("file://"):]
+    norm = posixpath.normpath(cleaned)
+    if (not cleaned or norm.startswith("/") or norm == ".." or norm.startswith("../")
+            or re.match(r"^[A-Za-z]:", norm)):
+        return ""
+    return norm                       # normpath already dropped any leading ./
+
+
+def load_sarif_claims(path: str, *, max_bytes: int = 10_000_000) -> Tuple[Dict[str, List[str]], List[str]]:
+    """Extract per-file and global canonical threat classes from a SARIF 2.1.0 file."""
+    p = Path(path)
+    try:
+        raw = p.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"Cannot read SARIF file {path}: {exc}") from None
+    if len(raw) > max_bytes:
+        raise ValueError(f"SARIF file exceeds {max_bytes} bytes.")
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"Invalid SARIF JSON: {exc}") from None
+    if not isinstance(doc, dict) or not isinstance(doc.get("runs"), list):
+        raise ValueError("SARIF document must contain a 'runs' array.")
+
+    per_file: Dict[str, List[str]] = {}
+    global_threats: List[str] = []
+    for run in doc["runs"]:
+        if not isinstance(run, dict):
+            continue
+        for res in run.get("results") or ():
+            if not isinstance(res, dict):
+                continue
+            rule_id = str(res.get("ruleId") or "").strip()
+            msg_obj = res.get("message")
+            msg_text = msg_obj.get("text", "") if isinstance(msg_obj, dict) else ""
+            raw_labels: List[str] = []
+            if rule_id in _SARIF_RULE_HINTS:
+                raw_labels.append(_SARIF_RULE_HINTS[rule_id])
+            if rule_id:
+                raw_labels.append(rule_id)
+            if isinstance(msg_text, str) and msg_text.strip():
+                raw_labels.append(msg_text)
+            mapped = normalise_threats(raw_labels)
+            if not mapped:
+                continue
+            for cls in mapped:
+                if cls not in global_threats:
+                    global_threats.append(cls)
+            for loc in res.get("locations") or ():
+                if not isinstance(loc, dict):
+                    continue
+                phys = loc.get("physicalLocation")
+                art = phys.get("artifactLocation") if isinstance(phys, dict) else None
+                uri = _normalise_sarif_uri(art.get("uri", "") if isinstance(art, dict) else "")
+                if not uri:
+                    continue
+                bucket = per_file.setdefault(uri, [])
+                for cls in mapped:
+                    if cls not in bucket:
+                        bucket.append(cls)
+    return per_file, global_threats

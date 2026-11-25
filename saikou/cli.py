@@ -125,8 +125,16 @@ def render_markdown(reports: Sequence[FileReport], mode: str) -> str:
     return "\n".join(out) + "\n"
 
 
+PR_COMMENT_MARKER = "<!-- saikou-verify-comment -->"
+
+
+def render_pr_comment(reports: Sequence[FileReport], mode: str) -> str:
+    return PR_COMMENT_MARKER + "\n" + render_markdown(reports, mode)
+
+
 def _emit(reports: List[FileReport], args: argparse.Namespace, mode: str,
-          notes: Sequence[str] = ()) -> int:
+          notes: Sequence[str] = (), *, base_sha: str = "",
+          file_hashes: Optional[dict] = None) -> int:
     if args.format == "json":
         print(render_json(reports, mode, notes))
     elif args.format == "sarif":
@@ -141,6 +149,20 @@ def _emit(reports: List[FileReport], args: argparse.Namespace, mode: str,
     if getattr(args, "summary", None):
         with open(args.summary, "a", encoding="utf-8") as fh:
             fh.write(render_markdown(reports, mode))
+    if getattr(args, "pr_comment_file", None):
+        with open(args.pr_comment_file, "w", encoding="utf-8") as fh:
+            fh.write(render_pr_comment(reports, mode))
+    if getattr(args, "evidence_file", None):
+        from .evidence import build_evidence_bundle
+        signing_key = os.getenv("SAIKOU_SIGNING_KEY") or None
+        try:
+            bundle = build_evidence_bundle(
+                reports, mode, base_sha=base_sha, skipped=notes,
+                file_hashes=file_hashes, signing_key=signing_key)
+        except ValueError as exc:
+            return _usage_error(str(exc))
+        with open(args.evidence_file, "w", encoding="utf-8") as fh:
+            json.dump(bundle, fh, indent=2)
     return EXIT_BLOCKED if any(r.blocked for r in reports) else EXIT_OK
 
 
@@ -148,26 +170,91 @@ def _emit(reports: List[FileReport], args: argparse.Namespace, mode: str,
 # commands
 # ---------------------------------------------------------------------------
 
+def _load_cli_policy(args: argparse.Namespace):
+    path = getattr(args, "policy", None)
+    if not path:
+        return None
+    from .policy import PolicyError, load_policy
+    try:
+        return load_policy(path)
+    except PolicyError as exc:
+        raise SystemExit(_usage_error(f"--policy: {exc}"))
+
+
+def _load_base_policy(args: argparse.Namespace, base_sha: str):
+    """In change gating the policy comes from the BASE commit, never from the change itself:
+    otherwise a pull request could add `exclude_paths = ["*"]` or a waiver and pass its own gate.
+    Returns (policy or None, notes)."""
+    path = getattr(args, "policy", None)
+    if not path:
+        return None, []
+    from .policy import PolicyError, parse_policy
+    from .verify import _git
+    rel = os.path.relpath(path) if os.path.isabs(path) else path
+    rel = rel.replace("\\", "/")
+    spec = rel if rel.startswith(("./", "../")) else "./" + rel
+    try:
+        raw = _git(["show", f"{base_sha}:{spec}"])
+    except GitError:
+        return None, [f"--policy {path}: not in base commit {base_sha[:12]}, so not applied "
+                      f"(a policy takes effect once it is merged)"]
+    try:
+        return parse_policy(raw), [f"policy {path} read from base commit {base_sha[:12]}"]
+    except PolicyError as exc:
+        raise SystemExit(_usage_error(f"--policy (base commit {base_sha[:12]}): {exc}"))
+
+
+def _load_cli_sarif(args: argparse.Namespace):
+    path = getattr(args, "from_sarif", None)
+    if not path:
+        return {}, []
+    from .sarif import load_sarif_claims
+    try:
+        return load_sarif_claims(path)
+    except ValueError as exc:
+        raise SystemExit(_usage_error(f"--from-sarif: {exc}"))
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
+    from .engine import sha256
+    from .policy import apply_waivers, norm_path
+
     try:
         before, after = _read(args.before), _read(args.after)
     except OSError as exc:
         return _usage_error(str(exc))
+    pol = _load_cli_policy(args)
+    sarif_map, sarif_global = _load_cli_sarif(args)
+    norm_after = norm_path(args.after)
+    claimed = list(_threats(args.claimed_threats))
+    for cls in (sarif_map.get(norm_after) or sarif_global) + (pol.claimed_threats if pol else []):
+        if cls not in claimed:
+            claimed.append(cls)
+    strict_api = args.strict_api or (pol.strict_api if pol else False)
+    must_preserve = _csv(args.must_preserve) + (pol.must_preserve if pol else [])
+    warn_only = _csv(args.warn_only) + (pol.warn_only if pol else [])
     report = verify_pair(
         before, after, path=args.after, language=args.language or None,
-        claimed_threats=_threats(args.claimed_threats), strict_api=args.strict_api,
-        must_preserve=_csv(args.must_preserve), expect_change=True,
-        run_tools=args.analyser, warn_only=_csv(args.warn_only))
+        claimed_threats=claimed, strict_api=strict_api,
+        must_preserve=must_preserve, expect_change=True,
+        run_tools=args.analyser, warn_only=warn_only)
     if not args.language and report.language == "unknown":
         # The AFTER name may be a temp file; fall back to the BEFORE extension.
         report = verify_pair(
-            before, after, path=args.before, claimed_threats=_threats(args.claimed_threats),
-            strict_api=args.strict_api, must_preserve=_csv(args.must_preserve),
-            expect_change=True, run_tools=args.analyser, warn_only=_csv(args.warn_only))
-    return _emit([report], args, "verify")
+            before, after, path=args.before, claimed_threats=claimed,
+            strict_api=strict_api, must_preserve=must_preserve,
+            expect_change=True, run_tools=args.analyser, warn_only=warn_only)
+    notes = apply_waivers([report], pol) if pol else []
+    hashes = {report.path: (sha256(before), sha256(after))}
+    return _emit([report], args, "verify", notes, file_hashes=hashes)
 
 
 def cmd_diff(args: argparse.Namespace) -> int:
+    import fnmatch
+    from .engine import sha256
+    from .policy import apply_waivers, norm_path
+
+    sarif_map, _ = _load_cli_sarif(args)
     try:
         base_sha, files, notes = changed_files(
             args.base, head=args.head or None, staged=args.staged,
@@ -175,26 +262,49 @@ def cmd_diff(args: argparse.Namespace) -> int:
             include_unknown=args.include_unknown)
     except GitError as exc:
         return _usage_error(f"git: {exc}")
-    notes = list(notes)
+    pol, pol_notes = _load_base_policy(args, base_sha)
+    notes = list(notes) + pol_notes
+    base_claimed = list(_threats(args.claimed_threats))
+    if pol:
+        for cls in pol.claimed_threats:
+            if cls not in base_claimed:
+                base_claimed.append(cls)
+    strict_api = args.strict_api or (pol.strict_api if pol else False)
+    must_preserve = _csv(args.must_preserve) + (pol.must_preserve if pol else [])
+    warn_only = _csv(args.warn_only) + (pol.warn_only if pol else [])
     reports: List[FileReport] = []
+    file_hashes: dict = {}
     for cf in files:
+        rel = norm_path(cf.path)
+        if pol and any(fnmatch.fnmatch(rel, pat) for pat in pol.exclude_paths):
+            notes.append(f"{cf.path}: excluded by policy")
+            continue
         if cf.unreadable:
-            reports.append(unreadable_report(cf, _csv(args.warn_only)))
+            reports.append(unreadable_report(cf, warn_only))
             continue
         if is_analyser_config(cf.path):
-            reports.append(config_weakening(cf.path, cf.before, cf.after, cf.change))
+            reports.append(config_weakening(cf.path, cf.before, cf.after, cf.change, warn_only))
+            file_hashes[cf.path] = (sha256(cf.before or ""), sha256(cf.after or ""))
             continue
+        file_claimed = list(base_claimed)
+        for cls in sarif_map.get(rel, ()):
+            if cls not in file_claimed:
+                file_claimed.append(cls)
         report = verify_pair(
             cf.before, cf.after, path=cf.path, language=cf.language or None,
-            claimed_threats=_threats(args.claimed_threats),
-            strict_api=args.strict_api, must_preserve=_csv(args.must_preserve),
-            expect_change=False, run_tools=args.analyser, warn_only=_csv(args.warn_only),
+            claimed_threats=file_claimed,
+            strict_api=strict_api, must_preserve=must_preserve,
+            expect_change=False, run_tools=args.analyser, warn_only=warn_only,
             change=cf.change)
         if report.language == "unknown" and not args.include_unknown:
             notes.append(f"{cf.path}: language not recognised (use --include-unknown)")
             continue
         reports.append(report)
-    return _emit(reports, args, f"diff {base_sha[:12]}", notes)
+        file_hashes[cf.path] = (sha256(cf.before or ""), sha256(cf.after or ""))
+    if pol:
+        notes.extend(apply_waivers(reports, pol))
+    return _emit(reports, args, f"diff {base_sha[:12]}", notes,
+                 base_sha=base_sha, file_hashes=file_hashes)
 
 
 def cmd_harden(args: argparse.Namespace) -> int:
@@ -299,6 +409,11 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     return _selftest()
 
 
+def cmd_mcp(_args: argparse.Namespace) -> int:
+    from .mcp import serve_stdio
+    return serve_stdio()
+
+
 def cmd_ui(args: argparse.Namespace) -> int:
     from .llm import load_env_file
     from .server import serve
@@ -338,6 +453,15 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--sarif-file", metavar="PATH", help="also write SARIF 2.1.0 here")
         sp.add_argument("--summary", metavar="PATH",
                         help="append a Markdown summary (e.g. $GITHUB_STEP_SUMMARY)")
+        sp.add_argument("--from-sarif", metavar="PATH",
+                        help="derive per-file claimed threats from an existing SARIF 2.1.0 report")
+        sp.add_argument("--policy", metavar="PATH",
+                        help="repository policy and time-bounded waivers (.saikou.toml); in diff mode read "
+                             "from the base commit, so a change cannot loosen its own gate")
+        sp.add_argument("--evidence-file", metavar="PATH",
+                        help="write an Evidence Bundle JSON; with SAIKOU_SIGNING_KEY set it carries a shared-key HMAC-SHA256 seal (tamper-evident, not a public-key signature)")
+        sp.add_argument("--pr-comment-file", metavar="PATH",
+                        help="write a sticky pull-request Markdown comment with marker")
 
     v = sub.add_parser("verify", help="verify one claimed fix: BEFORE vs AFTER")
     v.add_argument("before")
@@ -393,6 +517,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("selftest", help="run the engine's own checks (no network)")
     s.set_defaults(func=cmd_selftest)
+
+    m = sub.add_parser("mcp", help="run read-only MCP JSON-RPC 2.0 server over stdio")
+    m.set_defaults(func=cmd_mcp)
 
     u = sub.add_parser("ui", help="open the local app in your browser (127.0.0.1 only)")
     u.add_argument("--port", type=int, default=0, help="port to listen on (default: a free one)")

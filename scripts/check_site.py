@@ -51,6 +51,7 @@ BANNED = [
     r"\b100% (?:coverage|detection)\b", r"\b(?:full|complete) coverage\b", r"\bguarantee[sd]?\b",
     r"\bmist nooit\b", r"\bvangt (?:alles|elke|ieder)\b", r"\bblokkeert (?:alles|elke|iedere|ieder)\b",
     r"\bvolledige dekking\b", r"\bgarandeer[td]?\b", r"\bgegarandeerd\b",
+    r"\bnon[- ]repudiation\b", r"\bcryptographically signed\b", r"\bonweerlegba", r"\bcryptografisch ondertekend\b",
 ]
 # Words allowed to appear in a negated or retiring context.
 ALLOW_CONTEXT = [r"model10", r"nothing certified", r"certifies nothing", r"not\s+a\s+certificate", r"no certificate",
